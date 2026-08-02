@@ -4,11 +4,11 @@ from datetime import datetime
 from uuid import UUID
 
 class DevisCreate(BaseModel):
-    devis_id: str  # Ex: "DEV-2026-001"
+    devis_id: str  
     prospect_id: UUID
     produit_id: int
     caracteristiques_choisies: Optional[Dict[str, Any]] = None
-    duree: str  # Ex: "7 jours", "1 mois"
+    duree: str
     quantite: int = 1
     
     prix_unitaire: float

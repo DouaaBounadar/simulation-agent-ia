@@ -12,3 +12,4 @@ __pycache__/
 
 # Fichiers macOS (au cas où)
 .DS_Store
+generated_pdfs/

@@ -6,6 +6,9 @@ from app.models.database import SessionLocal, Produit, Prospect, Devis
 from app.schemas.prospect import ProspectCreate, ProspectResponse
 from app.schemas.devis import DevisCreate, DevisResponse
 
+# 👇 NOUVEAU : Import de notre service PDF
+from app.services.pdf_service import generate_devis_pdf
+
 app = FastAPI(
     title="API - Agent IA Commercial 360°",
     description="API de gestion du catalogue de location et suivi prospect/devis.",
@@ -43,7 +46,6 @@ def lister_produits(db: Session = Depends(get_db)):
 
 @app.post("/prospects", response_model=ProspectResponse, status_code=status.HTTP_201_CREATED)
 def creer_prospect(prospect: ProspectCreate, db: Session = Depends(get_db)):
-    # Vérifier si le téléphone existe déjà (contrainte unique en BDD)
     prospect_existant = db.query(Prospect).filter(Prospect.telephone == prospect.telephone).first()
     if prospect_existant:
         raise HTTPException(
@@ -70,6 +72,7 @@ def creer_prospect(prospect: ProspectCreate, db: Session = Depends(get_db)):
 @app.get("/prospects", response_model=List[ProspectResponse])
 def lister_prospects(db: Session = Depends(get_db)):
     return db.query(Prospect).all()
+
 # --- ROUTES DEVIS ---
 
 @app.post("/devis", response_model=DevisResponse, status_code=status.HTTP_201_CREATED)
@@ -84,7 +87,25 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
     if not produit:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
 
-    # 3. Créer le devis en base
+    # 👇 NOUVEAU : Préparation et génération du PDF
+    devis_dict = devis.model_dump()
+    prospect_dict = {
+        "nom": prospect.nom,
+        "email": prospect.email,
+        "telephone": prospect.telephone,
+        "entreprise": prospect.entreprise
+    }
+
+    try:
+        pdf_path = generate_devis_pdf(
+            devis_data=devis_dict, 
+            prospect_data=prospect_dict, 
+            produit_nom=produit.nom
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {str(e)}")
+
+    # 3. Créer le devis en base (avec le chemin du PDF ajouté à la fin)
     nouveau_devis = Devis(
         devis_id=devis.devis_id,
         prospect_id=devis.prospect_id,
@@ -98,7 +119,8 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
         frais_livraison=devis.frais_livraison,
         montant_caution=devis.montant_caution,
         prix_total_ttc=devis.prix_total_ttc,
-        status=devis.status
+        status=devis.status,
+        pdf_path=pdf_path  # 👈 ON SAUVEGARDE LE CHEMIN ICI
     )
 
     db.add(nouveau_devis)
