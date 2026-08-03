@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+import uuid
 
 from app.models.database import SessionLocal, Produit, Prospect, Devis
 from app.schemas.devis import DevisCreate, DevisResponse
 from app.services.pdf_service import generate_devis_pdf
+from app.services.pricing import calculate_devis_totals  # 👈 Nouvel import !
 
 router = APIRouter(
     prefix="/devis",
@@ -29,8 +31,19 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
     if not produit:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
 
-    # 3. Préparation et génération du PDF
+    # 3. Calcul dynamique des tarifs (Logique Métier)
+    # Pour l'exemple, supposons un tarif journalier de base de 150€ et une durée de 7 jours
+    # (Tu pourras adapter selon tes vrais champs de durée et prix produit)
+    calculs = calculate_devis_totals(
+        prix_journalier_de_base=150.0, 
+        duree_jours=7, 
+        quantite=devis.quantite
+    )
+
+    # 4. Préparation des données pour le PDF avec les prix calculés
     devis_dict = devis.model_dump()
+    devis_dict.update(calculs)  # On réinjecte les calculs automatiques
+
     prospect_dict = {
         "nom": prospect.nom,
         "email": prospect.email,
@@ -47,7 +60,7 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {str(e)}")
 
-    # 4. Créer le devis en base
+    # 5. Enregistrement en base avec les montants calculés automatiquement
     nouveau_devis = Devis(
         devis_id=devis.devis_id,
         prospect_id=devis.prospect_id,
@@ -55,12 +68,12 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
         caracteristiques_choisies=devis.caracteristiques_choisies,
         duree=devis.duree,
         quantite=devis.quantite,
-        prix_unitaire=devis.prix_unitaire,
-        prix_total=devis.prix_total,
-        tva=devis.tva,
-        frais_livraison=devis.frais_livraison,
-        montant_caution=devis.montant_caution,
-        prix_total_ttc=devis.prix_total_ttc,
+        prix_unitaire=calculs["prix_unitaire"],
+        prix_total=calculs["prix_total"],
+        tva=calculs["tva"],
+        frais_livraison=calculs["frais_livraison"],
+        montant_caution=calculs["montant_caution"],
+        prix_total_ttc=calculs["prix_total_ttc"],
         status=devis.status,
         pdf_path=pdf_path
     )
