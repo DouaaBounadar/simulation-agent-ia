@@ -1,8 +1,6 @@
-# app/models/database.py
-
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, create_engine
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, create_engine, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
@@ -32,6 +30,7 @@ class Prospect(Base):
     conversations = relationship("Conversation", back_populates="prospect")
     devis = relationship("Devis", back_populates="prospect")
 
+
 class Conversation(Base):
     __tablename__ = "conversation"
 
@@ -47,6 +46,7 @@ class Conversation(Base):
 
     prospect = relationship("Prospect", back_populates="conversations")
 
+
 class Produit(Base):
     __tablename__ = "produit"
 
@@ -56,6 +56,7 @@ class Produit(Base):
     caracteristiques = Column(JSONB) 
     stock_disponible = Column(Integer, default=1)
     date_creation = Column(DateTime, default=datetime.now)
+
 
 class Devis(Base):
     __tablename__ = "devis"
@@ -87,9 +88,48 @@ class Devis(Base):
 
     prospect = relationship("Prospect", back_populates="devis")
 
+
+# --- NOUVEAUX MODÈLES 360° ---
+
+class RelanceAuto(Base):
+    __tablename__ = "relances_automatiques"
+    
+    relance_id = Column(Integer, primary_key=True, index=True)
+    devis_id = Column(String, ForeignKey("devis.devis_id"))
+    date_planifiee = Column(DateTime)
+    statut = Column(String, default="Planifiée")  # "Planifiée", "Envoyée", "Annulée"
+    contenu_message = Column(Text)
+
+
+class Location(Base):
+    __tablename__ = "locations"
+    
+    location_id = Column(Integer, primary_key=True, index=True)
+    devis_id = Column(String, ForeignKey("devis.devis_id"), unique=True)
+    date_debut = Column(DateTime)
+    date_fin = Column(DateTime)
+    statut = Column(String, default="En cours")  # "En cours", "Terminée", "En retard"
+
+
+# 3. INITIALISATION
 def init_db():
     Base.metadata.create_all(bind=engine)
     print("✅ Base de données PostgreSQL initialisée avec succès.")
+# --- À AJOUTER À LA FIN DU FICHIER ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 3. INITIALISATION (Déjà présent dans votre fichier)
+def init_db():
+    Base.metadata.create_all(bind=engine)
+    print("✅ Base de données PostgreSQL initialisée avec succès.")
+
+if __name__ == "__main__":
+    init_db()
 
 if __name__ == "__main__":
     init_db()
