@@ -1,32 +1,35 @@
 import smtplib
+import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv# Permet de lire le fichier .env
+
+# On charge les variables cachées du fichier .env
+load_dotenv()
 
 def envoyer_alerte_commercial(prospect_nom: str, prospect_id: str, motif: str):
-    """
-    Envoie un email à l'équipe commerciale pour une demande de négociation.
-    """
-    # ⚙️ Configuration (À remplacer par vos vrais accès plus tard)
-    expediteur = "bot@votre-entreprise.com"
-    destinataire = "ventes@votre-entreprise.com"
+    # ⚙️ Récupération sécurisée depuis le .env
+    expediteur = os.getenv("EMAIL_SENDER")
+    mot_de_passe = os.getenv("EMAIL_PASSWORD")
+    destinataire = expediteur # On s'envoie l'email à nous-même pour tester
     
+    if not expediteur or not mot_de_passe:
+        print("❌ ERREUR : Les identifiants email sont introuvables dans le fichier .env")
+        return False
+        
     sujet = f"🚨 A RAPPELER : Négociation en cours avec {prospect_nom}"
     
     corps_message = f"""
     Bonjour l'équipe,
     
-    L'agent IA a besoin de votre aide pour clôturer une vente. Le client trouve le prix trop cher et souhaite négocier.
+    L'agent IA a besoin de votre aide pour clôturer une vente.
     
-    👤 Client (ID) : {prospect_id}
+    👤 Client : {prospect_nom} (ID: {prospect_id})
     📝 Motif : {motif}
     
-    Merci de le recontacter au plus vite pour ne pas perdre la vente !
-    
-    Cordialement,
-    Votre Assistant IA 🤖
+    Merci de le recontacter au plus vite !
     """
     
-    # 🛠️ Création de l'email
     msg = MIMEMultipart()
     msg['From'] = expediteur
     msg['To'] = destinataire
@@ -34,22 +37,16 @@ def envoyer_alerte_commercial(prospect_nom: str, prospect_id: str, motif: str):
     msg.attach(MIMEText(corps_message, 'plain'))
     
     try:
-        # 🟢 MODE SIMULATION (Pour tester sans bloquer l'application)
-        print("="*50)
-        print(f"📧 [SIMULATION EMAIL] - Message prêt à partir :")
-        print(f"De : {expediteur} | À : {destinataire}")
-        print(f"Sujet : {sujet}")
-        print("="*50)
+        print("⏳ Tentative d'envoi de l'email en cours...")
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(expediteur, mot_de_passe)
+        server.send_message(msg)
+        server.quit()
         
-        # 🔴 MODE RÉEL (À décommenter quand vous aurez un vrai mot de passe d'application Google/Outlook)
-        # mot_de_passe = "votre_mot_de_passe_securise"
-        # server = smtplib.SMTP('smtp.gmail.com', 587)
-        # server.starttls()
-        # server.login(expediteur, mot_de_passe)
-        # server.send_message(msg)
-        # server.quit()
-        
+        print("✅ SUCCESS : L'email a bien été envoyé !")
         return True
+    
     except Exception as e:
-        print(f"❌ Erreur lors de l'envoi de l'email : {e}")
+        print(f"❌ ERREUR d'envoi : {e}")
         return False

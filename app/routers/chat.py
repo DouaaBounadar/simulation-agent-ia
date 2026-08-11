@@ -28,6 +28,10 @@ class generer_devis(BaseModel):
     description: str = Field(..., description="Le résumé détaillé du matériel loué et la durée")
     duree: str = Field(..., description="La durée de la location (ex: 2 jours, 1 semaine)")
 
+class transferer_commercial(BaseModel):
+    """Outil à utiliser pour transférer la conversation à un humain si le client veut négocier le prix ou a un problème."""
+    motif: str = Field(..., description="La raison du transfert (ex: budget de 2200€ trop bas, demande de réduction)")
+
 SYSTEM_PROMPT = """
 Tu es un agent commercial d'élite spécialisé dans la location de matériel. 
 Ton objectif est de renseigner le client sur les prix réels, négocier, valider une offre, puis générer un devis.
@@ -36,7 +40,7 @@ RÈGLES DE COMPORTEMENT STRICTES (À SUIVRE À LA LETTRE) :
 
 1. VÉRIFICATION DU PRIX (PREMIER CONTACT) : Tu dois OBLIGATOIREMENT utiliser l'outil 'consulter_catalogue' pour connaître le vrai prix du produit demandé. Tu ne dois JAMAIS inventer un prix ou deviner un tarif.
 2. LA PROPOSITION : Une fois le prix récupéré via le catalogue, calcule le total si besoin et propose ce prix au client en texte clair. Demande son accord (ex: "Le tarif est de X€ au total. Qu'en pensez-vous ?"). 
-3.🚨 LA NÉGOCIATION : Si le client trouve le prix trop cher, NE PROPOSE JAMAIS DE RÉDUCTION DE TOI-MÊME. Tu dois lui expliquer gentiment que tu n'es pas autorisé à baisser les prix, mais que tu peux transmettre sa demande à l'équipe commerciale pour trouver une solution avec lui. 🚫 Tu ne dois JAMAIS utiliser l'outil 'generer_devis' s'il n'y a pas d'accord sur le prix initial.
+3. 🚨 LA NÉGOCIATION : Si le client trouve le prix trop cher, NE PROPOSE JAMAIS DE RÉDUCTION. Explique-lui que tu ne peux pas baisser les prix. S'il veut négocier, utilise OBLIGATOIREMENT l'outil 'transferer_commercial' pour alerter l'équipe humaine.
 4. LE DÉCLENCHEMENT : Utilise l'outil 'generer_devis' SI ET SEULEMENT SI le client donne un accord explicite sur le dernier prix proposé ("oui", "d'accord", "je valide").
 5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'generer_devis' a été utilisé avec succès, NE L'UTILISE PLUS JAMAIS pour ce client. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?", "merci"), réponds-lui NATURELLEMENT avec du texte, sans appeler d'outil. (Les devis sont généralement envoyés par email sous 15 minutes).
 
@@ -130,7 +134,7 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
 
     llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.7)
     
-    llm_with_tools = llm.bind_tools([generer_devis, consulter_catalogue])
+    llm_with_tools = llm.bind_tools([generer_devis, consulter_catalogue, transferer_commercial])
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
@@ -185,6 +189,18 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
             # 3. On rappelle l'IA (elle va lire le prix et répondre naturellement)
             reponse_finale = llm_with_tools.invoke(messages_complets)
             texte_final = reponse_finale.content
+
+        elif nom_outil == "transferer_commercial":
+            # 1. On met à jour le statut du prospect dans la BDD
+            prospect.status = "À rappeler (Négociation)"
+            db.commit()
+            
+            # 2. ✉️ ON DÉCLENCHE L'ALERTE EMAIL !
+            nom_client = prospect.nom if prospect.nom else "Client Web"
+            envoyer_alerte_commercial(nom_client, str(prospect.prospect_id), args.get('motif', 'Aucun motif précisé'))
+            
+            # 3. La réponse à afficher au client
+            texte_final = f"✅ C'est bien noté. J'ai alerté notre équipe commerciale (Motif : {args.get('motif')}). Un expert va vous recontacter très rapidement !"
 
     else:
         # Si l'IA n'appelle aucun outil (elle dit juste bonjour ou négocie)
