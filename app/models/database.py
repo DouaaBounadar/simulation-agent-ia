@@ -1,8 +1,18 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, create_engine, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    create_engine,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. CONFIGURATION DE LA CONNEXION POSTGRESQL
 # ⚠️ Remplacez ces valeurs par vos vrais identifiants PostgreSQL
@@ -123,13 +133,6 @@ def get_db():
     finally:
         db.close()
 
-# 3. INITIALISATION (Déjà présent dans votre fichier)
-def init_db():
-    Base.metadata.create_all(bind=engine)
-    print("✅ Base de données PostgreSQL initialisée avec succès.")
-
 if __name__ == "__main__":
     init_db()
 
-if __name__ == "__main__":
-    init_db()

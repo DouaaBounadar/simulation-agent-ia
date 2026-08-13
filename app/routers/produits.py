@@ -1,8 +1,8 @@
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import List
 
-from app.models.database import SessionLocal, Produit
+from app.models.database import Produit, SessionLocal
 
 router = APIRouter(
     prefix="/produits",
@@ -16,7 +16,7 @@ def get_db():
     finally:
         db.close()
 
-@router.get("", response_model=List[dict])
+@router.get("", response_model=list[dict])
 def lister_produits(db: Session = Depends(get_db)):
     produits = db.query(Produit).all()
     return [

@@ -1,5 +1,7 @@
 import pandas as pd
-from app.models.database import SessionLocal, Produit
+
+from app.models.database import Produit, SessionLocal
+
 
 def clean_val(val):
     """Convertit les cases vides (NaN) de Pandas en None pour PostgreSQL"""
@@ -25,7 +27,7 @@ def importer_donnees():
         session.commit()
         print("🧹 Table 'produit' vidée avec succès pour une nouvelle importation.")
         
-        for index, row in df.iterrows():
+        for _, row in df.iterrows():
             caracs = {
                 "specifications": {
                     "hauteur_travail": clean_val(row['Hauteur travail']),

@@ -1,17 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+import difflib
+import uuid  # Ajouté pour générer le devis_id
+
+from fastapi import APIRouter, Depends
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import tool
+from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-import uuid # Ajouté pour générer le devis_id
-from app.utils.email_sender import envoyer_alerte_commercial
-from app.services.pdf_service import generate_devis_pdf
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage , SystemMessage
+
 # On importe depuis votre fichier (qui contient get_db et les modèles)
-from app.models.database import get_db, Conversation, Prospect, Devis, SessionLocal, Produit
-from langchain_core.tools import tool
-from app.utils.email_sender import envoyer_devis_client
-import difflib
+from app.models.database import (
+    Conversation,
+    Devis,
+    Produit,
+    Prospect,
+    SessionLocal,
+    get_db,
+)
+from app.services.pdf_service import generate_devis_pdf
+from app.utils.email_sender import envoyer_alerte_commercial, envoyer_devis_client
 
 router = APIRouter(
     prefix="/chat",
@@ -92,7 +100,7 @@ def consulter_catalogue(nom_produit: str) -> str:
             return f"❌ Désolé, je n'ai rien trouvé qui ressemble à '{nom_produit}'."
 
     except Exception as e:
-        return f"Erreur de recherche : {str(e)}"
+        return f"Erreur de recherche : {e!s}"
     finally:
         db.close()
 

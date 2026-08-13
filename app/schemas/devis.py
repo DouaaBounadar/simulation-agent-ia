@@ -1,27 +1,29 @@
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any
 from uuid import UUID
+
+from pydantic import BaseModel
+
 
 class DevisCreate(BaseModel):
     devis_id: str  
     prospect_id: UUID
     produit_id: int
-    caracteristiques_choisies: Optional[Dict[str, Any]] = None
+    caracteristiques_choisies: dict[str, Any] | None = None
     duree: str
     quantite: int = 1
     
     prix_unitaire: float
     prix_total: float
     tva: float = 20.0
-    frais_livraison: Optional[float] = 0.0
-    montant_caution: Optional[float] = 0.0
+    frais_livraison: float | None = 0.0
+    montant_caution: float | None = 0.0
     prix_total_ttc: float
     
-    status: Optional[str] = "En attente"
+    status: str | None = "En attente"
 
 class DevisResponse(DevisCreate):
-    pdf_path: Optional[str] = None
+    pdf_path: str | None = None
     date_creation: datetime
 
     class Config:

@@ -1,0 +1,9 @@
+[tool.ruff]
+# On augmente la limite de ligne à 150 caractères au lieu de 88
+line-length = 150
+
+[tool.ruff.lint]
+# On ajoute E501 (Line too long) dans les erreurs à ignorer, 
+# en plus de B008 et BLE001 qu'on a déjà ajoutés.
+extend-ignore = ["B008", "BLE001", "E501"]
+select = ["E", "F", "B", "SIM"]

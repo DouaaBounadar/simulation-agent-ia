@@ -1,6 +1,7 @@
-import streamlit as st
-import requests
 import uuid
+
+import requests
+import streamlit as st
 
 # Configuration de la page
 st.set_page_config(page_title="Location Pro IA", page_icon="🏗️")
@@ -24,50 +25,49 @@ for message in st.session_state.messages:
 
 # 2. AFFICHAGE DU FORMULAIRE (S'il a été déclenché par l'IA)
 if st.session_state.attente_formulaire:
-    with st.chat_message("assistant"):
-        with st.form("formulaire_client"):
-            st.write("### 📝 Informations de facturation")
-            devis = st.session_state.donnees_devis
-            
-            st.info(f"📦 Produit : {devis.get('produit')} \n\n💶 Total : {devis.get('montant')} € HT")
-            
-            nom_client = st.text_input("Nom & Prénom *")
-            email_client = st.text_input("Adresse Email *")
-            entreprise_client = st.text_input("Nom de l'entreprise (Optionnel)")
-            
-            bouton_valider = st.form_submit_button("Générer mon devis en PDF")
-            
-            if bouton_valider:
-                if nom_client and email_client:
-                    st.success("✅ Informations validées ! Création du devis en cours...")
-                    
-                    # --- NOUVEAU CODE : L'appel vers l'API FastAPI ---
-                    url_finalisation = API_URL.replace("/chat/", "/chat/finaliser_devis")
-                    
-                    payload_devis = {
-                        "prospect_id": st.session_state.prospect_id,
-                        "nom": nom_client,
-                        "email": email_client,
-                        "entreprise": entreprise_client,
-                        "produit": devis.get("produit", "Matériel"),
-                        "montant": float(devis.get("montant", 0)),
-                        "duree": devis.get("duree", "Non précisée")
-                    }
-                    
-                    try:
-                        requests.post(url_finalisation, json=payload_devis)
-                    except Exception as e:
-                        st.error("Erreur lors de la création du devis sur le serveur.")
-                    # --------------------------------------------------
-                    
-                    st.session_state.attente_formulaire = False
-                    message_succes = f"✅ Parfait {nom_client.split()[0]} ! Le devis a été généré et sera envoyé à l'adresse {email_client}."
-                    st.session_state.messages.append({"role": "assistant", "content": message_succes})
-                    
-                    st.rerun()
+    with st.chat_message("assistant"), st.form("formulaire_client"):
+        st.write("### 📝 Informations de facturation")
+        devis = st.session_state.donnees_devis
+        
+        st.info(f"📦 Produit : {devis.get('produit')} \n\n💶 Total : {devis.get('montant')} € HT")
+        
+        nom_client = st.text_input("Nom & Prénom *")
+        email_client = st.text_input("Adresse Email *")
+        entreprise_client = st.text_input("Nom de l'entreprise (Optionnel)")
+        
+        bouton_valider = st.form_submit_button("Générer mon devis en PDF")
+        
+        if bouton_valider:
+            if nom_client and email_client:
+                st.success("✅ Informations validées ! Création du devis en cours...")
                 
-                else:
-                    st.error("⚠️ Veuillez remplir votre nom et votre adresse email.")
+                # --- NOUVEAU CODE : L'appel vers l'API FastAPI ---
+                url_finalisation = API_URL.replace("/chat/", "/chat/finaliser_devis")
+                
+                payload_devis = {
+                    "prospect_id": st.session_state.prospect_id,
+                    "nom": nom_client,
+                    "email": email_client,
+                    "entreprise": entreprise_client,
+                    "produit": devis.get("produit", "Matériel"),
+                    "montant": float(devis.get("montant", 0)),
+                    "duree": devis.get("duree", "Non précisée")
+                }
+                
+                try:
+                    requests.post(url_finalisation, json=payload_devis)
+                except Exception:
+                    st.error("Erreur lors de la création du devis sur le serveur.")
+                # --------------------------------------------------
+                
+                st.session_state.attente_formulaire = False
+                message_succes = f"✅ Parfait {nom_client.split()[0]} ! Le devis a été généré et sera envoyé à l'adresse {email_client}."
+                st.session_state.messages.append({"role": "assistant", "content": message_succes})
+                
+                st.rerun()
+            
+            else:
+                st.error("⚠️ Veuillez remplir votre nom et votre adresse email.")
 
 # 3. Champ de saisie (On le cache si le formulaire est ouvert)
 elif prompt := st.chat_input("Que souhaitez-vous louer aujourd'hui ? (ex: Nacelle ciseaux 12m)"):
@@ -96,7 +96,7 @@ elif prompt := st.chat_input("Que souhaitez-vous louer aujourd'hui ? (ex: Nacell
             else:
                 reponse_ia = f"❌ Erreur du serveur ({reponse.status_code})."
                 
-        except Exception as e:
+        except Exception:
             reponse_ia = "❌ Impossible de joindre le backend. FastAPI est-il lancé ?"
 
     with st.chat_message("assistant"):

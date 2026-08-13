@@ -1,9 +1,10 @@
-import smtplib
 import os
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import smtplib
 from email.mime.application import MIMEApplication
-from dotenv import load_dotenv# Permet de lire le fichier .env
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+from dotenv import load_dotenv  # Permet de lire le fichier .env
 
 # On charge les variables cachées du fichier .env
 load_dotenv()

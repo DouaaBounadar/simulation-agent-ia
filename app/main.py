@@ -1,8 +1,11 @@
-from fastapi import FastAPI
-from app.routers import produits, prospects, devis,chat 
 from contextlib import asynccontextmanager
-from app.models.database import init_db
+
 from dotenv import load_dotenv
+from fastapi import FastAPI
+
+from app.models.database import init_db
+from app.routers import chat, devis, produits, prospects
+
 load_dotenv() 
 
 # 1. On crée la fonction lifespan

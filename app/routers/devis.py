@@ -1,13 +1,19 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-import uuid
 
-from app.models.database import SessionLocal, Produit, Prospect, Devis
+from app.models.database import (
+    Devis,
+    Location,
+    Produit,
+    Prospect,
+    RelanceAuto,
+    SessionLocal,
+)
 from app.schemas.devis import DevisCreate, DevisResponse
 from app.services.pdf_service import generate_devis_pdf
 from app.services.pricing import calculate_devis_totals  # 👈 Nouvel import !
-from datetime import datetime, timedelta
-from app.models.database import Devis, Location, RelanceAuto
 
 router = APIRouter(
     prefix="/devis",
@@ -60,7 +66,7 @@ def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
             produit_nom=produit.nom
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {e!s}") from e
 
     # 5. Enregistrement en base avec les montants calculés automatiquement
     nouveau_devis = Devis(

@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
 from datetime import datetime
 
-from app.models.database import SessionLocal, Prospect
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.models.database import Prospect, SessionLocal
 from app.schemas.prospect import ProspectCreate, ProspectResponse
 
 router = APIRouter(
@@ -43,6 +43,6 @@ def creer_prospect(prospect: ProspectCreate, db: Session = Depends(get_db)):
     
     return nouveau_prospect
 
-@router.get("", response_model=List[ProspectResponse])
+@router.get("", response_model=list[ProspectResponse])
 def lister_prospects(db: Session = Depends(get_db)):
     return db.query(Prospect).all()
