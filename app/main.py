@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from app.models.database import init_db
-from app.routers import chat, devis, produits, prospects
+from app.routers import chat, devis, produits, prospects 
+
 
 load_dotenv() 
 

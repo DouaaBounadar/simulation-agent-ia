@@ -49,11 +49,11 @@ RÈGLES DE COMPORTEMENT STRICTES (À SUIVRE À LA LETTRE) :
 2. LA PROPOSITION : Une fois le prix récupéré via le catalogue, calcule le total si besoin et propose ce prix au client en texte clair. Demande son accord (ex: "Le tarif est de X€ au total. Qu'en pensez-vous ?"). 
 3. 🚨 LA NÉGOCIATION : Si le client trouve le prix trop cher, NE PROPOSE JAMAIS DE RÉDUCTION. Explique-lui que tu ne peux pas baisser les prix. S'il veut négocier, utilise OBLIGATOIREMENT l'outil 'transferer_commercial' pour alerter l'équipe humaine.
 4. LE DÉCLENCHEMENT DU DEVIS : Dès que le client accepte le prix proposé (ex: "je valide", "c'est d'accord"), tu DOIS OBLIGATOIREMENT utiliser l'outil 'preparer_devis'. Ne lui demande pas son nom ou son email dans le chat, un formulaire sécurisé va s'ouvrir automatiquement sur son écran.
-5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'preparer_devis' a été utilisé ou que le devis a été généré, NE L'UTILISE PLUS JAMAIS pour ce client. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?") ou dit simplement "merci", réponds-lui NATURELLEMENT avec du texte pour clôturer la conversation poliment.
+5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'preparer_devis' a été utilisé, le devis part en validation auprès de notre direction. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?"), explique-lui poliment qu'il le recevra par email dès que notre équipe l'aura validé. Ne relance plus d'outil.
 6. 🤫 SECRET PROFESSIONNEL : Tu es un humain. Ne mentionne JAMAIS le nom de tes outils internes (comme 'consulter_catalogue', 'transferer_commercial' ou 'generer_devis') au client. Tes actions et tes recherches doivent rester complètement invisibles dans tes réponses.
 7. 🏢 PRÉSENTATION GÉNÉRALE : Si le client demande ce que l'entreprise propose ou vend, ne lance AUCUNE recherche dans le catalogue. Réponds naturellement que nous louons du matériel BTP et de manutention (Nacelles, Gerbeurs, Chariots élévateurs, etc.) et demande-lui ce dont il a besoin exactement.
 
-RÈGLES DE L'OUTIL 'generer_devis' :
+RÈGLES DE L'OUTIL 'preparer_devis' :
 - montant : Le prix exact validé par le client.
 - description : Résumé du matériel.
 - duree : Durée convenue.
@@ -267,14 +267,42 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         prospect.entreprise = data.entreprise
         prospect.status = "Devis"
 
-    # 2. Créer l'historique du devis
+    # --- 🚀 NOUVEAUTÉ : RÉCUPÉRATION DU PRIX DANS LE JSON ---
+    produit_db = db.query(Produit).filter(Produit.nom == data.produit).first()
+    
+    vrai_montant = 150.0 # Prix par défaut
+    
+    if produit_db and produit_db.caracteristiques:
+        # On ouvre la boîte JSON qui contient toutes les infos de l'Excel
+        carac = produit_db.caracteristiques
+        
+        # On fait correspondre le choix du client avec la colonne de l'Excel
+        if data.duree == "1 jour":
+            vrai_montant = float(carac.get("1 jour", 150))
+        elif data.duree == "3 jours":
+            vrai_montant = float(carac.get("3 jours", 450))
+        elif data.duree == "1 semaine":
+            vrai_montant = float(carac.get("1 semaine", 1000))
+        elif data.duree == "2 semaines":
+            # On gère l'absence du "s" dans votre fichier Excel
+            vrai_montant = float(carac.get("2 semaine", carac.get("2 semaines", 2000)))
+        elif data.duree == "1 mois":
+            vrai_montant = float(carac.get("1 mois", 4000))
+        elif data.duree == "6 mois":
+            vrai_montant = float(carac.get("6 mois", 20000))
+        elif data.duree == "1 an":
+            vrai_montant = float(carac.get("1 an", 40000))
+    # --------------------------------------------------------
+
+    # 2. Créer l'historique du devis (AVEC LE VRAI MONTANT)
     id_du_devis = f"DEV-{str(uuid.uuid4())[:8].upper()}"
     nouveau_devis = Devis(
         devis_id=id_du_devis,
         prospect_id=data.prospect_id,
-        prix_total=data.montant,
+        prix_total=vrai_montant,  
+        prix_total_ttc=round(vrai_montant * 1.20, 2), # 👈 AJOUTEZ CETTE LIGNE
         duree=data.duree,
-        status="Généré"
+        status="Brouillon"
     )
     db.add(nouveau_devis)
     
@@ -284,7 +312,7 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         historique = list(conversation.messages)
         historique.append({
             "role": "agent", 
-            "content": f"[NOTE SYSTÈME INTERNE] : Opération réussie. Le client a rempli le formulaire. Le devis a été généré et envoyé à {data.email}. L'étape de devis est DÉFINITIVEMENT TERMINÉE. Si le client dit merci, dis-lui 'Je vous en prie'."
+            "content": f"[NOTE SYSTÈME INTERNE] : Opération réussie. Le client a rempli le formulaire. Le devis a été généré en BROUILLON et soumis au directeur pour validation. L'étape de devis est DÉFINITIVEMENT TERMINÉE. Si le client dit merci, dis-lui 'Je vous en prie, vous recevrez le devis par email après validation'."
         })
         conversation.messages = historique
         
@@ -298,24 +326,20 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         "telephone": "Non précisé"
     }
     
+    # Mise à jour des données du PDF
     devis_data = {
         "devis_id": id_du_devis,
         "duree": data.duree,
         "quantite": 1,
-        "prix_unitaire": data.montant,
-        "prix_total": data.montant,
-        "tva": round(data.montant * 0.20, 2),
+        "prix_unitaire": vrai_montant,
+        "prix_total": vrai_montant,
+        "tva": round(vrai_montant * 0.20, 2),
         "frais_livraison": 0,
         "montant_caution": 0,
-        "prix_total_ttc": round(data.montant * 1.20, 2)
+        "prix_total_ttc": round(vrai_montant * 1.20, 2)
     }
     
     chemin_pdf = generate_devis_pdf(devis_data, prospect_data, data.produit)
     print(f"🎉 SUCCESS: Le PDF a été généré via le formulaire ici : {chemin_pdf}")
     
-    # 4. 📧 ENVOI DE L'EMAIL !
-    envoyer_devis_client(data.email, data.nom, chemin_pdf)
-    
     return {"status": "success", "pdf_path": chemin_pdf}
-    
-    

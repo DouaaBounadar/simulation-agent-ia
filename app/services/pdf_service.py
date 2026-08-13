@@ -5,11 +5,15 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-PDF_DIR = "generated_pdfs"
+# 🚀 NOUVEAUTÉ : Un chemin absolu robuste
+DOSSIER_RACINE = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+# (Si votre fichier est directement dans 'app', remplacez "../.." par "..")
+PDF_DIR = os.path.join(DOSSIER_RACINE, "generated_pdfs")
 os.makedirs(PDF_DIR, exist_ok=True)
 
 def generate_devis_pdf(devis_data: dict, prospect_data: dict, produit_nom: str) -> str:
-    filename = f"devis_{devis_data['devis_id']}.pdf"
+    # 🚨 LA CORRECTION : On génère le nom EXACTEMENT comme Streamlit l'attend
+    filename = f"{devis_data['devis_id']}.pdf"
     filepath = os.path.join(PDF_DIR, filename)
     
     doc = SimpleDocTemplate(filepath, pagesize=letter)

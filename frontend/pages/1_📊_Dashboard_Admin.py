@@ -3,13 +3,17 @@ import pandas as pd
 from sqlalchemy.orm import Session
 import sys
 import os
+from datetime import datetime
 
-# Astuce pour permettre l'importation du backend depuis le dossier frontend/pages
+# 🚨 L'astuce DOIT être placée AVANT les imports de 'app' !
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
+from app.utils.email_sender import envoyer_devis_client
 from app.models.database import SessionLocal, Prospect, Devis
 
 st.set_page_config(page_title="Dashboard Directeur", page_icon="📊", layout="wide")
+
+# ... (le reste du code ne change pas) ...
 
 # 🔒 Système de connexion basique
 def check_password():
@@ -42,7 +46,8 @@ if check_password():
         col1, col2, col3, col4 = st.columns(4)
         
         total_prospects = db.query(Prospect).count()
-        devis_attente = db.query(Devis).filter(Devis.status == "Généré").count()
+        # On cherche désormais les statuts "Brouillon"
+        devis_attente = db.query(Devis).filter(Devis.status == "Brouillon").count()
         devis_acceptes = db.query(Devis).filter(Devis.status == "Accepté").count()
         
         # Calcul du CA (Somme des devis acceptés)
@@ -64,7 +69,7 @@ if check_password():
         st.header("📋 Devis en attente de validation")
         
         devis_list = db.query(Devis, Prospect).join(Prospect, Devis.prospect_id == Prospect.prospect_id)\
-                       .filter(Devis.status == "Généré").all()
+                       .filter(Devis.status == "Brouillon").all()
                        
         if not devis_list:
             st.info("Aucun devis en attente de validation. Bravo !")
@@ -81,7 +86,7 @@ if check_password():
                 })
             
             df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
             
             # --- 3. ACTIONS DE VALIDATION ---
             st.subheader("Actions rapides")
@@ -91,9 +96,45 @@ if check_password():
             with col_action2:
                 st.write("") # Pour aligner verticalement
                 st.write("")
-                if st.button("✅ Valider et Envoyer (Simulation)", type="primary"):
-                    # Ici, nous coderons l'Étape 5 plus tard !
-                    st.success(f"Le devis {devis_a_valider} a été validé ! (Ceci est une simulation pour l'instant)")
+                if st.button("✅ Valider et Envoyer", type="primary"):
+                    # 1. On cherche le devis et le prospect dans la base de données
+                    devis_db = db.query(Devis).filter(Devis.devis_id == devis_a_valider).first()
+                    
+                    if devis_db:
+                        prospect_db = db.query(Prospect).filter(Prospect.prospect_id == devis_db.prospect_id).first()
+                        
+                        try:
+                            # 2. On construit le chemin absolu du PDF
+                            dossier_racine = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+                            chemin_pdf = os.path.join(dossier_racine, "generated_pdfs", f"{devis_db.devis_id}.pdf")
+                            
+                            # 🔍 Vérification du fichier
+                            if not os.path.exists(chemin_pdf):
+                                st.error(f"❌ Le fichier PDF est introuvable ici : {chemin_pdf}")
+                                st.caption("💡 *Note : Si c'est un ancien devis, son fichier s'appelait peut-être 'devis_DEV-...pdf'. Créez un NOUVEAU devis pour tester le nouveau format !*")
+                                st.stop()
+                            else:
+                                # 🎉 NOUVEAU : Message de succès quand le fichier est bien trouvé !
+                                st.success(f"📄 PDF trouvé avec succès : `{devis_db.devis_id}.pdf`")
+                            
+                            # 3. 📧 On envoie l'email officiel au client !
+                            envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
+                            st.success(f"📧 Devis envoyé par email avec succès à {prospect_db.email} !")
+                            
+                            # 3. 📧 On envoie l'email officiel au client !
+                            envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
+                            
+                            # 4. 💾 On met à jour la base de données selon le cahier des charges
+                            devis_db.status = "Envoyé"
+                            devis_db.date_envoi = datetime.now()
+                            db.commit()
+                            
+                            # 5. On affiche un succès et on rafraîchit la page
+                            st.success(f"✅ Le devis {devis_a_valider} a été officiellement validé et envoyé à {prospect_db.email} !")
+                            st.rerun() # Rafraîchit l'interface pour faire disparaître le devis de la liste
+                            
+                        except Exception as e:
+                            st.error(f"❌ Erreur lors de la validation : {e}")
 
     except Exception as e:
         st.error(f"Erreur lors de la connexion à la base de données : {e}")
