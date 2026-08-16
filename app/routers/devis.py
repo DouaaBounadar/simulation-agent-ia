@@ -116,18 +116,13 @@ def accepter_devis_email(devis_id: str, db: Session = Depends(get_db)):
     # 3. Création automatique de la Location 
     # (Adapté selon les champs de votre ancien code et de votre modèle)
     date_debut_prevue = datetime.now(timezone.utc) + timedelta(days=1)
+  
     nouvelle_location = Location(
-        location_id=f"LOC-{str(uuid.uuid4())[:8].upper()}",  # Nouvel identifiant unique
         devis_id=devis.devis_id,
-        prospect_id=devis.prospect_id,
-        produit_id=devis.produit_id,
-        quantite=devis.quantite,
-        # Attention: si vos colonnes s'appellent différemment dans database.py, ajustez ces lignes :
-        date_debut_location=date_debut_prevue.date(),
-        prix_total_ttc=devis.prix_total_ttc,
-        status="Prévue"
+        statut="En cours"
     )
     db.add(nouvelle_location)
+    
 
     # 4. Annuler les relances automatiques en cours
     relances_en_attente = db.query(RelanceAuto).filter(

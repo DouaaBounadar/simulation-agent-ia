@@ -88,11 +88,13 @@ if check_password():
             df = pd.DataFrame(data)
             st.dataframe(df, width="stretch")
             
-            # --- 3. ACTIONS DE VALIDATION ---
+           # --- 3. ACTIONS DE VALIDATION ---
             st.subheader("Actions rapides")
-            col_action1, col_action2 = st.columns([1, 2])
+            col_action1, col_action2, col_action3 = st.columns([2, 1, 1])
+            
             with col_action1:
                 devis_a_valider = st.selectbox("Sélectionner un devis :", [d["ID Devis"] for d in data])
+                
             with col_action2:
                 st.write("") # Pour aligner verticalement
                 st.write("")
@@ -111,30 +113,44 @@ if check_password():
                             # 🔍 Vérification du fichier
                             if not os.path.exists(chemin_pdf):
                                 st.error(f"❌ Le fichier PDF est introuvable ici : {chemin_pdf}")
-                                st.caption("💡 *Note : Si c'est un ancien devis, son fichier s'appelait peut-être 'devis_DEV-...pdf'. Créez un NOUVEAU devis pour tester le nouveau format !*")
+                                st.caption("💡 *Note : Créez un NOUVEAU devis depuis l'agent pour tester !*")
                                 st.stop()
                             else:
-                                # 🎉 NOUVEAU : Message de succès quand le fichier est bien trouvé !
                                 st.success(f"📄 PDF trouvé avec succès : `{devis_db.devis_id}.pdf`")
                             
-                            # 3. 📧 On envoie l'email officiel au client !
-                            envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
-                            st.success(f"📧 Devis envoyé par email avec succès à {prospect_db.email} !")
-                            
-                            # 3. 📧 On envoie l'email officiel au client !
+                            # 3. 📧 On envoie l'email officiel au client (UNE SEULE FOIS ! 🎯)
                             envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
                             
-                            # 4. 💾 On met à jour la base de données selon le cahier des charges
+                            # 4. 💾 On met à jour la base de données
                             devis_db.status = "Envoyé"
                             devis_db.date_envoi = datetime.now()
                             db.commit()
                             
                             # 5. On affiche un succès et on rafraîchit la page
                             st.success(f"✅ Le devis {devis_a_valider} a été officiellement validé et envoyé à {prospect_db.email} !")
+                            
+                            # Pause d'une seconde pour que le directeur ait le temps de lire le message vert
+                            import time
+                            time.sleep(1.5)
                             st.rerun() # Rafraîchit l'interface pour faire disparaître le devis de la liste
                             
                         except Exception as e:
                             st.error(f"❌ Erreur lors de la validation : {e}")
+
+            with col_action3:
+                st.write("") # Pour aligner verticalement
+                st.write("")
+                if st.button("❌ Refuser (Erreur)"):
+                    devis_db = db.query(Devis).filter(Devis.devis_id == devis_a_valider).first()
+                    if devis_db:
+                        # On annule simplement le devis dans la base de données
+                        devis_db.status = "Annulé"
+                        db.commit()
+                        st.warning(f"🚫 Le devis {devis_a_valider} a été rejeté. Il n'a pas été envoyé au client.")
+                        
+                        import time
+                        time.sleep(1.5)
+                        st.rerun() # Disparaît du tableau de bord
 
     except Exception as e:
         st.error(f"Erreur lors de la connexion à la base de données : {e}")

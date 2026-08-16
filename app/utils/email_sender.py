@@ -124,3 +124,40 @@ def envoyer_devis_client(email_client: str, nom_client: str, chemin_pdf: str):
     except Exception as e:
         print(f"❌ Erreur lors de l'envoi de l'email : {e}")
         return False
+def envoyer_notification_directeur(devis_id: str, nom_client: str, montant: float, email_client: str = "Non renseigné", telephone_client: str = "Non renseigné"):
+    """Envoie un email au directeur pour le prévenir qu'un devis attend sa validation."""
+    email_directeur = os.getenv("EMAIL_SENDER")
+    mot_de_passe = os.getenv("EMAIL_PASSWORD")
+    
+    if not email_directeur or not mot_de_passe:
+        return False
+        
+    msg = EmailMessage()
+    msg['Subject'] = f"🔔 Nouveau devis à valider : {devis_id}"
+    msg['From'] = email_directeur
+    msg['To'] = email_directeur
+    
+    contenu = f"""
+    Bonjour,
+    
+    Un nouveau devis a été généré par l'agent IA et attend votre validation dans le Tableau de Bord.
+    
+    - Devis : {devis_id}
+    - Client : {nom_client}
+    - Email : {email_client}
+    - Téléphone : {telephone_client}
+    - Montant TTC : {montant} €
+    
+    Merci de vous connecter à l'interface d'administration pour valider ou refuser ce devis.
+    """
+    msg.set_content(contenu)
+    
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(email_directeur, mot_de_passe)
+            smtp.send_message(msg)
+        print(f"✅ Notification envoyée au directeur pour le devis {devis_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Erreur notification directeur : {e}")
+        return False

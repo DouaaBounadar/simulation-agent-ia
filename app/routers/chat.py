@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from fastapi.responses import HTMLResponse
 
 # On importe depuis votre fichier (qui contient get_db et les modèles)
 from app.models.database import (
@@ -15,11 +16,12 @@ from app.models.database import (
     Devis,
     Produit,
     Prospect,
+    Location,
     SessionLocal,
     get_db,
 )
 from app.services.pdf_service import generate_devis_pdf
-from app.utils.email_sender import envoyer_alerte_commercial, envoyer_devis_client
+from app.utils.email_sender import envoyer_alerte_commercial, envoyer_devis_client, envoyer_notification_directeur
 
 router = APIRouter(
     prefix="/chat",
@@ -52,6 +54,7 @@ RÈGLES DE COMPORTEMENT STRICTES (À SUIVRE À LA LETTRE) :
 5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'preparer_devis' a été utilisé, le devis part en validation auprès de notre direction. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?"), explique-lui poliment qu'il le recevra par email dès que notre équipe l'aura validé. Ne relance plus d'outil.
 6. 🤫 SECRET PROFESSIONNEL : Tu es un humain. Ne mentionne JAMAIS le nom de tes outils internes (comme 'consulter_catalogue', 'transferer_commercial' ou 'generer_devis') au client. Tes actions et tes recherches doivent rester complètement invisibles dans tes réponses.
 7. 🏢 PRÉSENTATION GÉNÉRALE : Si le client demande ce que l'entreprise propose ou vend, ne lance AUCUNE recherche dans le catalogue. Réponds naturellement que nous louons du matériel BTP et de manutention (Nacelles, Gerbeurs, Chariots élévateurs, etc.) et demande-lui ce dont il a besoin exactement.
+8. 🛑 STYLE DE COMMUNICATION : Agis comme un véritable humain. Tu ne dois JAMAIS écrire tes propres consignes, notes de scénario ou réflexions entre parenthèses comme "(Si le client dit...)" ou "(Si le client accepte)". Pose simplement ta question au client et attends sa réponse.
 
 RÈGLES DE L'OUTIL 'preparer_devis' :
 - montant : Le prix exact validé par le client.
@@ -253,19 +256,49 @@ class DevisFormulaire(BaseModel):
     nom: str
     email: str
     entreprise: str
+    telephone: str
     produit: str
     montant: float
     duree: str
+    quantite: int
 
 @router.post("/finaliser_devis")
 def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db)):
-    # 1. Mettre à jour les vraies informations du client
-    prospect = db.query(Prospect).filter(Prospect.prospect_id == data.prospect_id).first()
-    if prospect:
-        prospect.nom = data.nom
-        prospect.email = data.email
-        prospect.entreprise = data.entreprise
-        prospect.status = "Devis"
+    # ==========================================
+    # 1. RECONNAISSANCE INTELLIGENTE DU CLIENT
+    # ==========================================
+    
+    # On vérifie si ce numéro de téléphone existe déjà dans la base
+    prospect_existant = db.query(Prospect).filter(Prospect.telephone == data.telephone).first()
+
+    if prospect_existant:
+        # 🟢 LE CLIENT EXISTE DÉJÀ (C'est un habitué !)
+        prospect_existant.nom = data.nom
+        prospect_existant.email = data.email
+        prospect_existant.entreprise = data.entreprise
+        prospect_existant.status = "Devis"
+        
+        # On force l'utilisation de SON véritable ID historique
+        client_id_final = prospect_existant.prospect_id
+        
+        # On raccroche la conversation en cours à son vrai profil
+        conversation = db.query(Conversation).filter(Conversation.prospect_id == data.prospect_id).first()
+        if conversation:
+            conversation.prospect_id = client_id_final
+    else:
+        # 🔵 C'EST UN NOUVEAU CLIENT (On garde l'ID généré par Streamlit)
+        prospect_actuel = db.query(Prospect).filter(Prospect.prospect_id == data.prospect_id).first()
+        if prospect_actuel:
+            prospect_actuel.nom = data.nom
+            prospect_actuel.email = data.email
+            prospect_actuel.telephone = data.telephone
+            prospect_actuel.entreprise = data.entreprise
+            prospect_actuel.status = "Devis"
+            
+        client_id_final = data.prospect_id
+
+    # On enregistre les modifications du client dans la base
+    db.commit()
 
     # --- 🚀 NOUVEAUTÉ : RÉCUPÉRATION DU PRIX DANS LE JSON ---
     produit_db = db.query(Produit).filter(Produit.nom == data.produit).first()
@@ -284,7 +317,6 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         elif data.duree == "1 semaine":
             vrai_montant = float(carac.get("1 semaine", 1000))
         elif data.duree == "2 semaines":
-            # On gère l'absence du "s" dans votre fichier Excel
             vrai_montant = float(carac.get("2 semaine", carac.get("2 semaines", 2000)))
         elif data.duree == "1 mois":
             vrai_montant = float(carac.get("1 mois", 4000))
@@ -293,21 +325,23 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         elif data.duree == "1 an":
             vrai_montant = float(carac.get("1 an", 40000))
     # --------------------------------------------------------
+    prix_unitaire = vrai_montant
+    vrai_montant = prix_unitaire * data.quantite
 
-    # 2. Créer l'historique du devis (AVEC LE VRAI MONTANT)
+    # 2. Créer l'historique du devis (AVEC LE VRAI MONTANT ET LE VRAI CLIENT)
     id_du_devis = f"DEV-{str(uuid.uuid4())[:8].upper()}"
     nouveau_devis = Devis(
         devis_id=id_du_devis,
-        prospect_id=data.prospect_id,
+        prospect_id=client_id_final,  # 👈 TRÈS IMPORTANT : L'ID intelligent !
         prix_total=vrai_montant,  
-        prix_total_ttc=round(vrai_montant * 1.20, 2), # 👈 AJOUTEZ CETTE LIGNE
+        prix_total_ttc=round(vrai_montant * 1.20, 2), 
         duree=data.duree,
         status="Brouillon"
     )
     db.add(nouveau_devis)
     
-    # 🚨 CORRECTION DU BUG DE MÉMOIRE ICI (role: "agent")
-    conversation = db.query(Conversation).filter(Conversation.prospect_id == data.prospect_id).first()
+    # 🚨 CORRECTION DU BUG DE MÉMOIRE ICI
+    conversation = db.query(Conversation).filter(Conversation.prospect_id == client_id_final).first()
     if conversation:
         historique = list(conversation.messages)
         historique.append({
@@ -323,16 +357,16 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
         "nom": data.nom,
         "email": data.email,
         "entreprise": data.entreprise,
-        "telephone": "Non précisé"
+        "telephone": data.telephone # 👈 Modifié pour s'afficher sur le PDF !
     }
     
     # Mise à jour des données du PDF
     devis_data = {
         "devis_id": id_du_devis,
         "duree": data.duree,
-        "quantite": 1,
-        "prix_unitaire": vrai_montant,
-        "prix_total": vrai_montant,
+        "quantite": data.quantite,    
+        "prix_unitaire": prix_unitaire, 
+        "prix_total": vrai_montant,     
         "tva": round(vrai_montant * 0.20, 2),
         "frais_livraison": 0,
         "montant_caution": 0,
@@ -341,5 +375,64 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
     
     chemin_pdf = generate_devis_pdf(devis_data, prospect_data, data.produit)
     print(f"🎉 SUCCESS: Le PDF a été généré via le formulaire ici : {chemin_pdf}")
-    
+    # ...
+
+    # 🚨 Appels corrigés avec les bons noms de paramètres positionnels / nommés
+    envoyer_notification_directeur(
+        id_du_devis, 
+        data.nom, 
+        devis_data["prix_total_ttc"], 
+        data.email, 
+        data.telephone
+    )
     return {"status": "success", "pdf_path": chemin_pdf}
+    
+
+@router.get("/valider_devis/{devis_id}", response_class=HTMLResponse)
+def valider_devis_par_email(devis_id: str, db: Session = Depends(get_db)):
+    # 1. Chercher le devis
+    devis = db.query(Devis).filter(Devis.devis_id == devis_id).first()
+    if not devis:
+        return HTMLResponse(content="<h1>❌ Devis introuvable</h1>", status_code=404)
+    
+    # 2. Mettre à jour le statut du devis
+    devis.status = "Accepté"
+    
+    # 3. Créer automatiquement la Location correspondant au devis
+    # (Sécurité si prix_total_ttc est vide, on prend prix_total)
+    montant_final = devis.prix_total_ttc if devis.prix_total_ttc else devis.prix_total
+    
+    nouvelle_location = Location(
+        devis_id=devis.devis_id,
+        statut="En cours"
+    )
+    db.add(nouvelle_location)
+    
+    # 4. Mettre à jour le prospect
+    prospect = db.query(Prospect).filter(Prospect.prospect_id == devis.prospect_id).first()
+    if prospect:
+        prospect.status = "Client"
+        
+    db.commit()
+    
+    # 5. Page HTML de succès élégante pour le client
+    html_content = f"""
+    <html>
+        <head>
+            <title>Location Confirmée</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background-color: #f4f6f9; }}
+                .card {{ background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: inline-block; }}
+                h1 {{ color: #2e7d32; }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>🎉 Félicitations !</h1>
+                <p>Votre location pour le devis <b>{devis_id}</b> a été validée avec succès.</p>
+                <p>Nos équipes logistiques vont vous contacter très rapidement pour la livraison.</p>
+            </div>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=200)

@@ -1,19 +1,11 @@
 import uuid
-
-import requests
-import streamlit as st
 import sys
 import os
-import uuid
 import requests
 import streamlit as st
 
 # 🚨 L'astuce pour permettre l'importation du dossier 'app' depuis 'frontend'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Configuration de la page
-st.set_page_config(page_title="Location Pro IA", page_icon="🏗️")
-st.title("🤖 Assistant Commercial - Location Pro")
 
 # Configuration de la page
 st.set_page_config(page_title="Location Pro IA", page_icon="🏗️")
@@ -62,10 +54,12 @@ if st.session_state.attente_formulaire:
                     "⏱️ Durée de location", 
                     ["1 jour", "3 jours", "1 semaine", "2 semaines", "1 mois", "6 mois", "1 an"]
                 )
+            quantite_choisie = st.number_input("🔢 Quantité souhaitée", min_value=1, value=1, step=1)
             
             st.divider()
             nom_client = st.text_input("Nom & Prénom *")
             email_client = st.text_input("Adresse Email *")
+            telephone = st.text_input("📞 Numéro de téléphone")
             entreprise_client = st.text_input("Nom de l'entreprise (Optionnel)")
             
             bouton_valider = st.form_submit_button("Générer mon devis officiel")
@@ -81,22 +75,29 @@ if st.session_state.attente_formulaire:
                         "prospect_id": st.session_state.prospect_id,
                         "nom": nom_client,
                         "email": email_client,
+                        "telephone": telephone,        # 👈 Assurez-vous que telephone est bien envoyé !
                         "entreprise": entreprise_client,
-                        "produit": produit_choisi,     # 👈 La valeur du menu déroulant
-                        "montant": 0,                  # 👈 Le backend recalculera le vrai prix
-                        "duree": duree_choisie         # 👈 La valeur du menu déroulant
+                        "produit": produit_choisi,     
+                        "montant": 0,                  
+                        "duree": duree_choisie,       
+                        "quantite": quantite_choisie  
                     }
                     
                     try:
                         import requests
-                        requests.post(url_finalisation, json=payload_devis)
-                    except Exception:
-                        st.error("Erreur lors de la création du devis sur le serveur.")
-                    
-                    st.session_state.attente_formulaire = False
-                    message_succes = f"✅ Parfait {nom_client.split()[0]} ! Le devis a été généré en brouillon pour la direction."
-                    st.session_state.messages.append({"role": "assistant", "content": message_succes})
-                    st.rerun()
+                        reponse = requests.post(url_finalisation, json=payload_devis)
+                        
+                        if reponse.status_code == 200:
+                            st.session_state.attente_formulaire = False
+                            message_succes = f"✅ Parfait {nom_client.split()[0]} ! Le devis a été généré en brouillon pour la direction."
+                            st.session_state.messages.append({"role": "assistant", "content": message_succes})
+                            st.rerun()
+                        else:
+                            # 🚨 C'EST CETTE LIGNE QUI VA SAUVER NOTRE PROJET :
+                            st.error(f"❌ Le douanier FastAPI a refusé (Erreur {reponse.status_code}) : {reponse.text}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Impossible de joindre le serveur : {e}")
                 else:
                     st.error("⚠️ Veuillez remplir votre nom et votre adresse email.")
 
