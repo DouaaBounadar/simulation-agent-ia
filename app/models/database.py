@@ -29,7 +29,7 @@ class Prospect(Base):
 
     prospect_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nom = Column(String(255))
-    telephone = Column(String(20), unique=True)
+    telephone = Column(String(20), unique=False)
     email = Column(String(255))
     entreprise = Column(String(255))
     source = Column(String(50)) # WhatsApp, Email, Form, Chat

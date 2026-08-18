@@ -1,11 +1,12 @@
 import difflib
 import uuid  # Ajouté pour générer le devis_id
-
+import os
 from fastapi import APIRouter, Depends
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from fastapi.responses import HTMLResponse
@@ -33,10 +34,16 @@ class ChatRequest(BaseModel):
     message: str
 
 class preparer_devis(BaseModel):
-    """Prépare les informations du devis une fois que le client a validé le prix, pour déclencher le formulaire."""
-    montant: str = Field(..., description="Le prix total en euros (ex: 2400)")
-    description: str = Field(..., description="Le résumé détaillé du matériel loué et la durée")
-    duree: str = Field(..., description="La durée de la location (ex: 2 jours, 1 semaine)")
+    """Outil FINAL à utiliser UNIQUEMENT quand le client a accepté le prix et fourni TOUTES ses informations."""
+    nom: str = Field(..., description="Nom et prénom du client")
+    entreprise: str = Field(..., description="Nom de la société (ou 'Particulier')")
+    email: str = Field(..., description="Adresse email du client")
+    telephone: str = Field(..., description="Numéro de téléphone du client")
+    produit: str = Field(..., description="Le produit exact recherché")
+    quantite: int = Field(..., description="La quantité souhaitée")
+    dimensions: str = Field(..., description="Les dimensions, hauteur, ou caractéristiques techniques")
+    duree: str = Field(..., description="Le délai ou la durée de location")
+    montant: float = Field(..., description="Le prix total HT validé par le client")
 class transferer_commercial(BaseModel):
     """Outil à utiliser pour transférer la conversation à un humain si le client veut négocier le prix ou a un problème."""
     motif: str = Field(..., description="La raison du transfert (ex: budget de 2200€ trop bas, demande de réduction)")
@@ -50,17 +57,33 @@ RÈGLES DE COMPORTEMENT STRICTES (À SUIVRE À LA LETTRE) :
 1. VÉRIFICATION DU PRIX (PREMIER CONTACT) : Tu dois OBLIGATOIREMENT utiliser l'outil 'consulter_catalogue' pour connaître le vrai prix du produit demandé. Tu ne dois JAMAIS inventer un prix ou deviner un tarif.
 2. LA PROPOSITION : Une fois le prix récupéré via le catalogue, calcule le total si besoin et propose ce prix au client en texte clair. Demande son accord (ex: "Le tarif est de X€ au total. Qu'en pensez-vous ?"). 
 3. 🚨 LA NÉGOCIATION : Si le client trouve le prix trop cher, NE PROPOSE JAMAIS DE RÉDUCTION. Explique-lui que tu ne peux pas baisser les prix. S'il veut négocier, utilise OBLIGATOIREMENT l'outil 'transferer_commercial' pour alerter l'équipe humaine.
-4. LE DÉCLENCHEMENT DU DEVIS : Dès que le client accepte le prix proposé (ex: "je valide", "c'est d'accord"), tu DOIS OBLIGATOIREMENT utiliser l'outil 'preparer_devis'. Ne lui demande pas son nom ou son email dans le chat, un formulaire sécurisé va s'ouvrir automatiquement sur son écran.
+4. LE DÉCLENCHEMENT DU DEVIS : Dès que le client accepte le prix proposé, tu dois préparer son devis officiel. Mais ATTENTION, tu ne peux utiliser l'outil 'preparer_devis' que si tu as validé l'étape de récolte des informations (voir règle 10).
 5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'preparer_devis' a été utilisé, le devis part en validation auprès de notre direction. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?"), explique-lui poliment qu'il le recevra par email dès que notre équipe l'aura validé. Ne relance plus d'outil.
 6. 🤫 SECRET PROFESSIONNEL : Tu es un humain. Ne mentionne JAMAIS le nom de tes outils internes (comme 'consulter_catalogue', 'transferer_commercial' ou 'generer_devis') au client. Tes actions et tes recherches doivent rester complètement invisibles dans tes réponses.
 7. 🏢 PRÉSENTATION GÉNÉRALE : Si le client demande ce que l'entreprise propose ou vend, ne lance AUCUNE recherche dans le catalogue. Réponds naturellement que nous louons du matériel BTP et de manutention (Nacelles, Gerbeurs, Chariots élévateurs, etc.) et demande-lui ce dont il a besoin exactement.
 8. 🛑 STYLE DE COMMUNICATION : Agis comme un véritable humain. Tu ne dois JAMAIS écrire tes propres consignes, notes de scénario ou réflexions entre parenthèses comme "(Si le client dit...)" ou "(Si le client accepte)". Pose simplement ta question au client et attends sa réponse.
 9. 🔍 QUALIFICATION DU BESOIN : Si le client demande un matériel de manière trop globale ou générique (ex: "je veux louer une nacelle", "avez-vous un chariot ?"), NE LANCE PAS de recherche dans le catalogue tout de suite. Demande-lui d'abord de préciser le type exact (ex: nacelle ciseaux ou articulée ?) et les caractéristiques souhaitées (ex: quelle hauteur de travail en mètres ?).
+10. 📋 LA RÉCOLTE DES INFORMATIONS (OBLIGATOIRE) : Avant d'utiliser l'outil 'preparer_devis', tu dois t'assurer d'avoir récolté TOUTES ces informations auprès du client de manière conversationnelle et naturelle :
+    - Sa société (si c'est un pro)
+    - Son nom complet
+    - Son adresse email et son téléphone
+    - Le produit exact recherché
+    - La quantité
+    - Les dimensions ou spécificités techniques
+    - Le délai souhaité
+    Si le client accepte le prix mais qu'il te manque une seule de ces informations, NE LANCE PAS l'outil de devis. Pose-lui poliment les questions manquantes de façon naturelle, comme le ferait un vrai vendeur.
 
 RÈGLES DE L'OUTIL 'preparer_devis' :
-- montant : Le prix exact validé par le client.
-- description : Résumé du matériel.
-- duree : Durée convenue.
+Tu dois y insérer avec précision toutes les données de ton enquête :
+- nom : Nom complet du client
+- entreprise : Nom de la société
+- email : Adresse email valide
+- telephone : Numéro de téléphone
+- produit : Le type de matériel
+- quantite : Le nombre demandé
+- dimensions : Hauteur, taille ou autre spécificité
+- duree : La durée de la location
+- montant : Le prix total final
 """
 
 @tool
@@ -145,8 +168,11 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
         elif msg["role"] == "agent":
             messages_langchain.append(AIMessage(content=msg["content"]))
 
-    llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.7)
-    
+    llm = ChatGoogleGenerativeAI(
+    model="gemini-3.6-flash",
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0
+)
     outils_disponibles = [consulter_catalogue, transferer_commercial]
     
     # Si le client n'a pas encore fait de devis, on lui donne l'outil
@@ -177,31 +203,78 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
         args = tool_call["args"]
 
         if nom_outil == "preparer_devis":
-            # On récupère les infos validées par l'IA
-            montant_ht = args.get("montant", "0")
-            nom_produit = args.get("description", "Matériel")
+            # 1. L'IA a récolté TOUTES les informations de l'enquête !
+            nom = args.get("nom", "Non précisé")
+            entreprise = args.get("entreprise", "Non précisé")
+            email = args.get("email", "Non précisé")
+            telephone = args.get("telephone", "Non précisé")
+            produit = args.get("produit", "Matériel")
+            quantite = int(args.get("quantite", 1))
+            dimensions = args.get("dimensions", "Standard")
             duree = args.get("duree", "Non précisée")
+            montant_ht = float(args.get("montant", 0.0))
+
+            # 2. On met à jour la "carte d'identité" du client dans la Base de Données
+            prospect.nom = nom
+            prospect.entreprise = entreprise
+            prospect.email = email
+            prospect.telephone = telephone
+            prospect.status = "Devis"
+            db.commit()
+
+            # 3. Création du devis automatique (Bypass du formulaire !)
+            import uuid
+            id_du_devis = f"DEV-{str(uuid.uuid4())[:8].upper()}"
             
-            texte_final = "Parfait ! Pour finaliser votre demande et générer le devis officiel, merci de remplir ce court formulaire : 👇"
+            nouveau_devis = Devis(
+                devis_id=id_du_devis,
+                prospect_id=prospect.prospect_id,
+                prix_total=montant_ht,
+                prix_total_ttc=round(montant_ht * 1.20, 2),
+                duree=duree,
+                status="Brouillon"
+            )
+            db.add(nouveau_devis)
+            db.commit()
+
+            # 4. Génération du PDF physique
+            prospect_data = {
+                "nom": nom, "email": email, "entreprise": entreprise, "telephone": telephone
+            }
+            devis_data = {
+                "devis_id": id_du_devis,
+                "duree": duree,
+                "quantite": quantite,
+                "prix_unitaire": montant_ht / quantite if quantite > 0 else montant_ht,
+                "prix_total": montant_ht,
+                "tva": round(montant_ht * 0.20, 2),
+                "frais_livraison": 0,
+                "montant_caution": 0,
+                "prix_total_ttc": round(montant_ht * 1.20, 2)
+            }
             
-            # On sauvegarde la réponse dans l'historique
+            # (On combine le produit et la dimension pour le PDF)
+            description_pdf = f"{produit} - {dimensions}"
+            chemin_pdf = generate_devis_pdf(devis_data, prospect_data, description_pdf)
+
+            # 5. Notification au Directeur
+            from app.utils.email_sender import envoyer_notification_directeur
+            envoyer_notification_directeur(id_du_devis, nom, devis_data["prix_total_ttc"], email, telephone)
+
+            # 6. La réponse finale que l'IA dira au client
+            texte_final = f"C'est parfait {nom} ! J'ai bien enregistré votre demande pour {quantite} {produit} ({dimensions}). Votre devis officiel a été généré avec succès et transmis à notre direction. Vous le recevrez d'ici peu sur votre adresse ({email}). Merci pour votre confiance !"
+            
             nouvel_historique = list(historique_actuel)
             nouvel_historique.append({"role": "user", "content": requete.message})
             nouvel_historique.append({"role": "agent", "content": texte_final})
             conversation.messages = nouvel_historique
             db.commit()
 
-            # 🚨 LA MAGIE EST ICI : On renvoie un signal à Streamlit
+            # FIN DE L'ACTION : Plus d'action 'afficher_formulaire' !
             return {
                 "prospect_id": requete.prospect_id,
                 "message_client": requete.message,
-                "reponse_agent": texte_final,
-                "action": "afficher_formulaire", 
-                "donnees_devis": {
-                    "montant": float(montant_ht),
-                    "produit": nom_produit,
-                    "duree": duree
-                }
+                "reponse_agent": texte_final
             }
 
         elif nom_outil == "consulter_catalogue":

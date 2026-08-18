@@ -120,7 +120,9 @@ elif prompt := st.chat_input("Que souhaitez-vous louer aujourd'hui ? (ex: Nacell
             if reponse.status_code == 200:
                 donnees = reponse.json() # On extrait le dictionnaire (C'est votre ancienne 'reponse_api')
                 reponse_ia = donnees.get("reponse_agent", "")
-                
+                if isinstance(reponse_ia, list) and len(reponse_ia) > 0:
+                  reponse_ia = reponse_ia[0].get("text", reponse_ia)
+    # ------------------------------------
                 # NOUVEAU : On écoute le signal caché !
                 if donnees.get("action") == "afficher_formulaire":
                     st.session_state.attente_formulaire = True
