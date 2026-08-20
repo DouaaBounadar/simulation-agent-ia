@@ -36,6 +36,10 @@ class Prospect(Base):
     status = Column(String(50)) # Nouveau, Qualifié, Client, Perdu
     date_premiere_contact = Column(DateTime)
     date_creation = Column(DateTime, default=datetime.now)
+    # 👇 LES 2 NOUVELLES LIGNES POUR LE CRM 👇
+    montant_en_cours = Column(Numeric(10, 2), default=0)
+    date_relance = Column(DateTime)
+    # 👆 =================================== 👆
 
     conversations = relationship("Conversation", back_populates="prospect")
     devis = relationship("Devis", back_populates="prospect")
@@ -55,6 +59,8 @@ class Conversation(Base):
     date_fin = Column(DateTime)
 
     prospect = relationship("Prospect", back_populates="conversations")
+
+
 
 
 class Produit(Base):
@@ -119,6 +125,19 @@ class Location(Base):
     date_debut = Column(DateTime)
     date_fin = Column(DateTime)
     statut = Column(String, default="En cours")  # "En cours", "Terminée", "En retard"
+# 👇 LA NOUVELLE TABLE POUR LE ROBOT CRM 👇
+class TacheCommercial(Base):
+    __tablename__ = "tache_commercial"
+    
+    tache_id = Column(Integer, primary_key=True, index=True)
+    prospect_id = Column(UUID(as_uuid=True), ForeignKey("prospect.prospect_id", ondelete="CASCADE"))
+    titre = Column(String(255))
+    description = Column(Text)
+    date_echeance = Column(DateTime)
+    statut = Column(String(50), default="À faire")
+    
+    date_creation = Column(DateTime, default=datetime.now)
+# 👆 ===================================== 👆
 
 
 # 3. INITIALISATION

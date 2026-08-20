@@ -161,3 +161,50 @@ def envoyer_notification_directeur(devis_id: str, nom_client: str, montant: floa
     except Exception as e:
         print(f"❌ Erreur notification directeur : {e}")
         return False
+# À AJOUTER DANS app/utils/email_sender.py
+
+def envoyer_email_relance(email_client: str, nom_client: str, numero_relance: int):
+    """Envoie un email de relance personnalisé selon le délai."""
+    
+    if numero_relance == 1:
+        sujet = "Votre devis Location Pro vous attend ! ⏳"
+        corps = f"Bonjour {nom_client},\n\nNous vous avons fait parvenir votre devis il y a quelques heures. Avez-vous eu le temps d'y jeter un œil ?\nNotre équipe reste à votre disposition pour toute question."
+    
+    elif numero_relance == 2:
+        sujet = "Avez-vous des questions sur votre devis ? 🤝"
+        corps = f"Bonjour {nom_client},\n\nNous revenons vers vous concernant votre devis. Si vous avez besoin d'ajuster les quantités ou la durée, n'hésitez pas à nous le dire en répondant simplement à cet email !"
+    
+    elif numero_relance == 3:
+        sujet = "Dernière relance concernant votre projet de location ⚠️"
+        corps = f"Bonjour {nom_client},\n\nSans retour de votre part d'ici demain, nous clôturerons votre dossier et remettrons le matériel en disponibilité pour d'autres clients. Contactez-nous vite si votre projet est toujours d'actualité."
+    else:
+        return # Sécurité
+
+    # ⚠️ Remplacez ceci par votre vrai code d'envoi d'email (SMTP)
+    # Exemple si vous utilisez smtplib, ou juste un print pour l'instant :
+    print(f"🚀 [EMAIL RÉEL ENVOYÉ] -> À: {email_client} | Sujet: {sujet}")
+    # send_mail(email_client, sujet, corps) # Votre vraie fonction d'envoi
+def envoyer_email_marketing(email_client: str, sujet: str, corps: str):
+    """Envoie la newsletter générée par l'IA."""
+    email_expediteur = os.getenv("EMAIL_SENDER")
+    mot_de_passe = os.getenv("EMAIL_PASSWORD")
+    
+    if not email_expediteur or not mot_de_passe:
+        print("❌ Erreur : Identifiants email introuvables.")
+        return False
+        
+    msg = EmailMessage()
+    msg['Subject'] = sujet
+    msg['From'] = email_expediteur
+    msg['To'] = email_client
+    msg.set_content(corps)
+    
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(email_expediteur, mot_de_passe)
+            smtp.send_message(msg)
+        print(f"✅ Newsletter envoyée avec succès à {email_client}")
+        return True
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi de la newsletter : {e}")
+        return False

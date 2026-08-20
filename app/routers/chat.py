@@ -10,6 +10,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from fastapi.responses import HTMLResponse
+from datetime import datetime, timedelta
 
 # On importe depuis votre fichier (qui contient get_db et les modèles)
 from app.models.database import (
@@ -176,7 +177,7 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
     outils_disponibles = [consulter_catalogue, transferer_commercial]
     
     # Si le client n'a pas encore fait de devis, on lui donne l'outil
-    if prospect.status != "Devis":
+    if prospect.status not in ["Devis", "Qualifié"]:
         outils_disponibles.append(preparer_devis)
         
     llm_with_tools = llm.bind_tools(outils_disponibles)
@@ -213,13 +214,18 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
             dimensions = args.get("dimensions", "Standard")
             duree = args.get("duree", "Non précisée")
             montant_ht = float(args.get("montant", 0.0))
-
             # 2. On met à jour la "carte d'identité" du client dans la Base de Données
             prospect.nom = nom
             prospect.entreprise = entreprise
             prospect.email = email
             prospect.telephone = telephone
-            prospect.status = "Devis"
+            
+            # 👇 --- 🌟 INTÉGRATION CRM INVISIBLE POUR L'IA 🌟 --- 👇
+            prospect.status = "Qualifié" 
+            prospect.montant_en_cours = montant_ht
+            prospect.date_relance = datetime.now() + timedelta(days=2) # Relance prévue dans 2 jours
+            # 👆 ---------------------------------------------------- 👆
+            
             db.commit()
 
             # 3. Création du devis automatique (Bypass du formulaire !)
