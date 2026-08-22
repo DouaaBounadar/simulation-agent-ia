@@ -4,7 +4,11 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from app.models.database import init_db
-from app.routers import chat, devis, produits, prospects 
+from app.routers import chat, devis, produits, prospects, whatsapp
+
+
+# ... après la création de app = FastAPI()
+
 
 
 load_dotenv() 
@@ -31,6 +35,7 @@ app.include_router(produits.router)
 app.include_router(prospects.router)
 app.include_router(devis.router)
 app.include_router(chat.router)
+app.include_router(whatsapp.router)
 
 @app.get("/")
 def accueil():
