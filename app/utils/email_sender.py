@@ -9,28 +9,32 @@ from dotenv import load_dotenv  # Permet de lire le fichier .env
 # On charge les variables cachées du fichier .env
 load_dotenv()
 
-def envoyer_alerte_commercial(prospect_nom: str, prospect_id: str, motif: str):
-    # ⚙️ Récupération sécurisée depuis le .env
+def envoyer_alerte_commercial(prospect_nom: str, prospect_id: str, motif: str, telephone: str = "Non renseigné", email: str = "Non renseigné"):
+    # ⚙️ Récupération sécurisée depuis le .env (gardez vos lignes existantes ici)
     expediteur = os.getenv("EMAIL_SENDER")
     mot_de_passe = os.getenv("EMAIL_PASSWORD")
-    destinataire = expediteur # On s'envoie l'email à nous-même pour tester
+    destinataire = expediteur
     
     if not expediteur or not mot_de_passe:
-        print("❌ ERREUR : Les identifiants email sont introuvables dans le fichier .env")
         return False
         
-    sujet = f"🚨 A RAPPELER : Négociation en cours avec {prospect_nom}"
+    sujet = f"🚨 A RAPPELER : Négociation avec {prospect_nom}"
     
     corps_message = f"""
     Bonjour l'équipe,
     
     L'agent IA a besoin de votre aide pour clôturer une vente.
     
-    👤 Client : {prospect_nom} (ID: {prospect_id})
+    👤 Client : {prospect_nom}
+    📞 Téléphone : {telephone}
+    ✉️ Email : {email}
+    🆔 ID Système : {prospect_id}
+    
     📝 Motif : {motif}
     
     Merci de le recontacter au plus vite !
     """
+    # ... (gardez la suite de la fonction intacte pour l'envoi SMTP)
     
     msg = MIMEMultipart()
     msg['From'] = expediteur
