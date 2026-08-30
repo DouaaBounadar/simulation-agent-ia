@@ -5,8 +5,7 @@ from fastapi import FastAPI
 
 from app.models.database import init_db
 from app.routers import chat, devis, produits, prospects, whatsapp
-
-
+from robot_relances import planificateur
 # ... après la création de app = FastAPI()
 
 
@@ -37,6 +36,18 @@ app.include_router(devis.router)
 app.include_router(chat.router)
 app.include_router(whatsapp.router)
 
+
 @app.get("/")
 def accueil():
     return {"message": "✅ L'API de l'Agent IA est en ligne et opérationnelle !"}
+# Modifiez l'import pour pointer vers le nom de votre fichier (ex: auto_relance.py)
+
+
+@app.on_event("startup")
+def start_scheduler():
+    planificateur.start()
+    print("⏰ Robot de relance automatique connecté au serveur !")
+
+@app.on_event("shutdown")
+def stop_scheduler():
+    planificateur.shutdown()

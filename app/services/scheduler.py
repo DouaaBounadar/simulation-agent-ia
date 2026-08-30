@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 from app.models.database import SessionLocal, Prospect, TacheCommercial
 
 def executer_relances_automatiques():
     db = SessionLocal()
     maintenant = datetime.now()
+    
+    print(f"🔄 [{maintenant.strftime('%H:%M:%S')}] Vérification des relances automatiques...")
     
     # On cherche les prospects qualifiés ayant une relance dépassée
     prospects_a_relancer = db.query(Prospect).filter(
@@ -53,6 +56,12 @@ def executer_relances_automatiques():
             
     db.commit()
     db.close()
+
+# --- INITIALISATION DU PLANIFICATEUR ---
+planificateur = BackgroundScheduler()
+
+# Pour le test, on configure l'exécution toutes les 2 minutes
+planificateur.add_job(executer_relances_automatiques, 'interval', minutes=2)
 
 if __name__ == "__main__":
     executer_relances_automatiques()

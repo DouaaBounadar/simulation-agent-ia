@@ -19,6 +19,8 @@ from app.models.database import (
     Produit,
     Prospect,
     Location,
+    RelanceAuto, 
+    TacheCommercial,
     SessionLocal,
     get_db,
 )
@@ -229,18 +231,33 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
             db.commit()
 
             # 3. Création du devis automatique (Bypass du formulaire !)
+            # 3. Création du devis automatique (Bypass du formulaire !)
             import uuid
             id_du_devis = f"DEV-{str(uuid.uuid4())[:8].upper()}"
             
+            # 👇 NOUVEAU : On cherche le produit dans la base pour récupérer son ID
+            produit_db = db.query(Produit).filter(Produit.nom.ilike(f"%{produit}%")).first()
+            produit_id_trouve = produit_db.produit_id if produit_db else None
+
             nouveau_devis = Devis(
                 devis_id=id_du_devis,
                 prospect_id=prospect.prospect_id,
+                produit_id=produit_id_trouve,  # 👈 AJOUTÉ
+                quantite=quantite,             # 👈 AJOUTÉ
                 prix_total=montant_ht,
                 prix_total_ttc=round(montant_ht * 1.20, 2),
                 duree=duree,
                 status="Brouillon"
             )
             db.add(nouveau_devis)
+            db.commit()
+            nouvelle_relance = RelanceAuto(
+                devis_id=id_du_devis,
+                date_planifiee=prospect.date_relance, # Déjà calculée à J+2
+                statut="Planifiée",
+                contenu_message=f"Bonjour {nom}, avez-vous pu consulter notre devis {id_du_devis} ?"
+            )
+            db.add(nouvelle_relance)
             db.commit()
 
             # 4. Génération du PDF physique
@@ -304,6 +321,17 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
 
         elif nom_outil == "transferer_commercial":
             # 1. On met à jour le statut du prospect dans la BDD
+            prospect.status = "À rappeler (Négociation)"
+            nouvelle_tache = TacheCommercial(
+                prospect_id=prospect.prospect_id,
+                titre="Appel Client : Négociation de prix",
+                description=args.get('motif', 'Aucun motif précisé'),
+                date_echeance=datetime.now() + timedelta(hours=2), # À rappeler dans les 2h
+                statut="À faire"
+            )
+            db.add(nouvelle_tache)
+            # -----------------------------------------------------------
+            
             prospect.status = "À rappeler (Négociation)"
             db.commit()
             
@@ -412,7 +440,9 @@ def finaliser_devis_endpoint(data: DevisFormulaire, db: Session = Depends(get_db
     id_du_devis = f"DEV-{str(uuid.uuid4())[:8].upper()}"
     nouveau_devis = Devis(
         devis_id=id_du_devis,
-        prospect_id=client_id_final,  # 👈 TRÈS IMPORTANT : L'ID intelligent !
+        prospect_id=client_id_final,  
+        produit_id=produit_db.produit_id if produit_db else None,  # 👈 AJOUTÉ
+        quantite=data.quantite,                                    # 👈 AJOUTÉ
         prix_total=vrai_montant,  
         prix_total_ttc=round(vrai_montant * 1.20, 2), 
         duree=data.duree,
@@ -482,8 +512,28 @@ def valider_devis_par_email(devis_id: str, db: Session = Depends(get_db)):
     # (Sécurité si prix_total_ttc est vide, on prend prix_total)
     montant_final = devis.prix_total_ttc if devis.prix_total_ttc else devis.prix_total
     
+    # 👇 NOUVEAU : Conversion de la durée textuelle en vraies dates
+    date_start = datetime.now()
+    date_end = date_start
+    duree_texte = devis.duree.lower() if devis.duree else ""
+    
+    if "jour" in duree_texte:
+        jours = int(''.join(filter(str.isdigit, duree_texte)) or 1)
+        date_end = date_start + timedelta(days=jours)
+    elif "semaine" in duree_texte:
+        semaines = int(''.join(filter(str.isdigit, duree_texte)) or 1)
+        date_end = date_start + timedelta(weeks=semaines)
+    elif "mois" in duree_texte:
+        mois = int(''.join(filter(str.isdigit, duree_texte)) or 1)
+        date_end = date_start + timedelta(days=30 * mois) # Approximation
+    elif "an" in duree_texte:
+        ans = int(''.join(filter(str.isdigit, duree_texte)) or 1)
+        date_end = date_start + timedelta(days=365 * ans)
+
     nouvelle_location = Location(
         devis_id=devis.devis_id,
+        date_debut=date_start,  # 👈 AJOUTÉ
+        date_fin=date_end,      # 👈 AJOUTÉ
         statut="En cours"
     )
     db.add(nouvelle_location)

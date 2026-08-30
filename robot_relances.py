@@ -119,5 +119,23 @@ def lancer_robot():
     print("✅ Fin de l'inspection. À plus tard !")
     db.close()
 
+# --- INITIALISATION DU PLANIFICATEUR ---
+from apscheduler.schedulers.background import BackgroundScheduler
+
+planificateur = BackgroundScheduler()
+
+# On configure le robot pour s'exécuter toutes les 2 minutes pour vos tests
+planificateur.add_job(lancer_robot, 'interval', minutes=2)
+
 if __name__ == "__main__":
-    lancer_robot()
+    # Si vous lancez ce fichier directement, le planificateur démarre
+    planificateur.start()
+    print("⏰ Planificateur de relances démarré. Appuyez sur Ctrl+C pour quitter.")
+    
+    # Garde le script actif pour que le planificateur puisse tourner
+    import time
+    try:
+        while True:
+            time.sleep(2)
+    except (KeyboardInterrupt, SystemExit):
+        planificateur.shutdown()
