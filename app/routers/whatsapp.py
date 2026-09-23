@@ -35,6 +35,10 @@ async def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
             db.refresh(prospect)
 
         # 2. 🧠 ON BRANCHE VOTRE AGENT IA
+        import time
+        start_time = time.time()
+        print(f"⏳ Envoi du message '{message_client}' à l'IA...")
+        
         requete = ChatRequest(
             prospect_id=str(prospect.prospect_id), 
             message=message_client
@@ -42,8 +46,8 @@ async def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         
         reponse_ia = await discuter_avec_ia(requete=requete, db=db)
         
-        # 🛠️ LA CORRECTION EST ICI : On force le format Texte pour Twilio
-        contenu_brut = reponse_ia["reponse_agent"]
+        # 🛠️ Extraction sécurisée
+        contenu_brut = reponse_ia.get("reponse_agent", "")
         if isinstance(contenu_brut, list):
             texte_reponse = "\n".join([
                 item.get("text", str(item)) if isinstance(item, dict) else str(item) 
@@ -52,9 +56,18 @@ async def whatsapp_webhook(From: str = Form(...), Body: str = Form(...)):
         else:
             texte_reponse = str(contenu_brut)
 
+        # Sécurité Anti-Vide
+        if not texte_reponse or texte_reponse.strip() == "":
+            texte_reponse = "Désolé, je suis là ! Que vouliez-vous me demander ?"
+            print("⚠️ L'IA a renvoyé un texte vide, remplacement par la phrase de sécurité.")
+
         # 3. On renvoie la réponse propre à WhatsApp
         twiml = MessagingResponse()
         twiml.message(texte_reponse)
+        
+        temps_ecoule = round(time.time() - start_time, 2)
+        print(f"⏱️ Temps de réponse de l'IA : {temps_ecoule} secondes")
+        print(f"📤 XML envoyé à Twilio : \n{twiml}")
 
         return Response(content=str(twiml), media_type="application/xml")
 

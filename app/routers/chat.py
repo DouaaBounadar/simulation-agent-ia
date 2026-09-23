@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from fastapi.responses import HTMLResponse
 from datetime import datetime, timedelta
+import time
 
 # On importe depuis votre fichier (qui contient get_db et les modèles)
 from app.models.database import (
@@ -36,104 +37,111 @@ class ChatRequest(BaseModel):
     prospect_id: str
     message: str
 
+
 class preparer_devis(BaseModel):
-    """Outil FINAL à utiliser UNIQUEMENT quand le client a accepté le prix et fourni TOUTES ses informations."""
+    """Outil FINAL à utiliser UNIQUEMENT quand TOUTES les étapes de qualification sont terminées."""
     nom: str = Field(..., description="Nom et prénom du client")
-    entreprise: str = Field(..., description="Nom de la société (ou 'Particulier')")
     email: str = Field(..., description="Adresse email du client")
-    telephone: str = Field(..., description="Numéro de téléphone du client")
-    produit: str = Field(..., description="Le produit exact recherché")
+    telephone_personnel: str = Field(..., description="Numéro de téléphone personnel")
+    entreprise: str = Field(default="Non précisé", description="Nom de l'entreprise (laisser 'Non précisé' si usage personnel)")
+    telephone_entreprise: str = Field(default="", description="Numéro de l'entreprise (laisser vide si usage personnel)")
+    usage: str = Field(..., description="'Personnel' ou 'Entreprise'")
+    adresse_complete: str = Field(..., description="Adresse postale complète")
+    ville: str = Field(..., description="Ville pour la livraison")
+    produit: str = Field(..., description="Le modèle exact validé (ex: Nacelle Ciseaux)")
+    dimensions: str = Field(default="Standard", description="Hauteur ou spécificité technique validée (ex: 12m Électrique)")
     quantite: int = Field(..., description="La quantité souhaitée")
-    dimensions: str = Field(..., description="Les dimensions, hauteur, ou caractéristiques techniques")
-    duree: str = Field(..., description="Le délai ou la durée de location")
-    montant: float = Field(..., description="Le prix total HT validé par le client")
+    duree: str = Field(..., description="La durée de location")
+    montant: float = Field(default=0.0, description="OBLIGATOIREMENT 0.0")
 class transferer_commercial(BaseModel):
-    """Outil à utiliser pour transférer la conversation à un humain si le client veut négocier le prix ou a un problème."""
-    motif: str = Field(..., description="La raison du transfert (ex: budget de 2200€ trop bas, demande de réduction)")
-
+    """Outil à utiliser UNIQUEMENT si le client est très en colère, a un problème technique grave, ou s'il refuse catégoriquement de continuer même après tes explications."""
+    motif: str = Field(..., description="La raison du transfert")
 SYSTEM_PROMPT = """
-Tu es un agent commercial d'élite spécialisé dans la location de matériel. 
-Ton objectif est de renseigner le client sur les prix réels, négocier, valider une offre, puis générer un devis.
+Tu es un agent de qualification d'élite spécialisé dans la location de matériel.
+Ton objectif est de guider le client à travers un tunnel de qualification strict en 6 étapes. Tu dois RESPECTER ATTENTIVEMENT CES INSTRUCTIONS à la lettre. Pose les questions étape par étape (1 ou 2 à la fois maximum) pour ne pas braquer le client.
 
-RÈGLES DE COMPORTEMENT STRICTES (À SUIVRE À LA LETTRE) :
+🛑 RÈGLE ABSOLUE CONCERNANT LE PRIX (NE JAMAIS DÉROGER) :
+- Tu ne dois JAMAIS négocier sur le prix.
+- Tu ne dois JAMAIS parler du prix ou donner une estimation.
+- Si le client pose une question sur le prix EN MILIEU de conversation (c'est-à-dire qu'il te manque encore des informations à collecter), évite de donner un prix et dis-lui EXACTEMENT ceci : "Pour que l'on puisse vous répondre à ce sujet, je dois juste connaître toutes vos informations, et notre responsable vous contactera le plus tôt possible pour vous parler du prix." (Puis enchaîne poliment avec ta question en cours).
+- Si le client pose la question sur le prix À LA FIN de la conversation (une fois que toutes les informations du formulaire ont été collectées et validées), tu dois lui dire EXACTEMENT ceci : "Notre responsable vous fera connaître très prochainement le prix via vos coordonnées, merci."
 
-1. VÉRIFICATION DU PRIX (PREMIER CONTACT) : Tu dois OBLIGATOIREMENT utiliser l'outil 'consulter_catalogue' pour connaître le vrai prix du produit demandé. Tu ne dois JAMAIS inventer un prix ou deviner un tarif.
-2. LA PROPOSITION : Une fois le prix récupéré via le catalogue, calcule le total si besoin et propose ce prix au client en texte clair. Demande son accord (ex: "Le tarif est de X€ au total. Qu'en pensez-vous ?"). 
-3. 🚨 LA NÉGOCIATION : Si le client trouve le prix trop cher, NE PROPOSE JAMAIS DE RÉDUCTION. Explique-lui que tu ne peux pas baisser les prix. S'il veut négocier, utilise OBLIGATOIREMENT l'outil 'transferer_commercial' pour alerter l'équipe humaine.
-4. LE DÉCLENCHEMENT DU DEVIS : Dès que le client accepte le prix proposé, tu dois préparer son devis officiel. Mais ATTENTION, tu ne peux utiliser l'outil 'preparer_devis' que si tu as validé l'étape de récolte des informations (voir règle 10).
-5. 🚨 APRÈS LE DEVIS (TRÈS IMPORTANT) : Une fois que l'outil 'preparer_devis' a été utilisé, le devis part en validation auprès de notre direction. Si le client pose ensuite des questions (ex: "quand vais-je le recevoir ?"), explique-lui poliment qu'il le recevra par email dès que notre équipe l'aura validé. Ne relance plus d'outil.
-6. 🤫 SECRET PROFESSIONNEL : Tu es un humain. Ne mentionne JAMAIS le nom de tes outils internes (comme 'consulter_catalogue', 'transferer_commercial' ou 'generer_devis') au client. Tes actions et tes recherches doivent rester complètement invisibles dans tes réponses.
-7. 🏢 PRÉSENTATION GÉNÉRALE : Si le client demande ce que l'entreprise propose ou vend, ne lance AUCUNE recherche dans le catalogue. Réponds naturellement que nous louons du matériel BTP et de manutention (Nacelles, Gerbeurs, Chariots élévateurs, etc.) et demande-lui ce dont il a besoin exactement.
-8. 🛑 STYLE DE COMMUNICATION : Agis comme un véritable humain. Tu ne dois JAMAIS écrire tes propres consignes, notes de scénario ou réflexions entre parenthèses comme "(Si le client dit...)" ou "(Si le client accepte)". Pose simplement ta question au client et attends sa réponse.
-9. 🔍 QUALIFICATION DU BESOIN : Si le client demande un matériel de manière trop globale ou générique (ex: "je veux louer une nacelle", "avez-vous un chariot ?"), NE LANCE PAS de recherche dans le catalogue tout de suite. Demande-lui d'abord de préciser le type exact (ex: nacelle ciseaux ou articulée ?) et les caractéristiques souhaitées (ex: quelle hauteur de travail en mètres ?).
-10. 📋 LA RÉCOLTE DES INFORMATIONS (OBLIGATOIRE) : Avant d'utiliser l'outil 'preparer_devis', tu dois t'assurer d'avoir récolté TOUTES ces informations auprès du client de manière conversationnelle et naturelle :
-    - Sa société (si c'est un pro)
-    - Son nom complet
-    - Son adresse email et son téléphone
-    - Le produit exact recherché
-    - La quantité
-    - Les dimensions ou spécificités techniques
-    - Le délai souhaité
-    Si le client accepte le prix mais qu'il te manque une seule de ces informations, NE LANCE PAS l'outil de devis. Pose-lui poliment les questions manquantes de façon naturelle, comme le ferait un vrai vendeur.
+**ÉTAPE 1 : Validation du Produit**
+Dès que le client mentionne un produit, utilise l'outil 'consulter_catalogue'. 
+- Si l'outil indique que le produit n'existe pas, réponds EXACTEMENT : "Je suis désolé, ce produit ne correspond à aucun produit dans notre catalogue, merci de vérifier le nom du produit."
+- Si le produit existe (ex: Nacelle Ciseaux), passe à l'étape 2.
 
-RÈGLES DE L'OUTIL 'preparer_devis' :
-Tu dois y insérer avec précision toutes les données de ton enquête :
-- nom : Nom complet du client
-- entreprise : Nom de la société
-- email : Adresse email valide
-- telephone : Numéro de téléphone
-- produit : Le type de matériel
-- quantite : Le nombre demandé
-- dimensions : Hauteur, taille ou autre spécificité
-- duree : La durée de la location
-- montant : Le prix total final
+**ÉTAPE 2 : Qualification Technique (Strictement basée sur la BDD)**
+L'outil catalogue te fournira les caractéristiques disponibles pour la catégorie demandée (Hauteur, Énergie, Capacité, Utilisation, etc.).
+Pose des questions pour affiner chaque critère manquant jusqu'à identifier le modèle EXACT. N'invente aucune caractéristique hors de celles fournies par l'outil.
+
+**ÉTAPE 3 : Logistique & Usage**
+Une fois le modèle exact identifié, demande :
+1. La quantité souhaitée.
+2. La ville (pour la livraison) ET l'adresse personnelle complète.
+3. La période de location (durée).
+4. S'il s'agit d'un usage personnel ou pour une entreprise.
+⚠️ RÈGLE DE RÉPONSE INCOMPLÈTE : Si le client répond à certaines questions mais en oublie d'autres (ex: il donne la quantité mais oublie la ville), TU DOIS le relancer spécifiquement sur l'information manquante avant de passer à l'étape 4.
+
+**ÉTAPE 4 : Informations Personnelles (Conditionnelles)**
+Une fois la logistique validée, demande :
+1. Nom et prénom.
+2. Adresse email.
+3. Numéro de téléphone personnel.
+4. ⚠️ CONDITION STRICTE : SI (et seulement si) le client a indiqué un usage "Entreprise" à l'étape 3, demande AUSSI le numéro de téléphone de l'entreprise et le nom de l'entreprise. Si c'est un usage personnel, ne demande pas ce numéro.
+
+**ÉTAPE 5 : Finalisation**
+Dès que TOUTES ces informations sont récoltées sans exception (ne rate aucune information), déclenche l'outil 'preparer_devis' avec un montant OBLIGATOIRE de 0.0.
+
+**ÉTAPE 6 : Relation Client (Post-Devis)**
+Si tu constates dans l'historique que le devis a DÉJÀ été généré (les informations ont été collectées), ton rôle strict de qualification est terminé.
+- Ne relance JAMAIS les questions des étapes 1 à 5.
+- Discute NORMALEMENT, naturellement et poliment avec le client.
+- S'il te relance (ex: "hello", "je n'ai rien reçu", ou des questions sur le matériel), utilise les informations de l'historique pour lui répondre de manière personnalisée et humaine, comme le ferait un conseiller commercial qui connaît déjà son dossier.
 """
+
+
+import time
 
 @tool
 def consulter_catalogue(nom_produit: str) -> str:
-    """
-    Outil obligatoire pour consulter les tarifs d'un produit.
-    Recherche de manière intelligente, même si le client fait des fautes ou oublie des tirets.
-    """
+    """Consulte la base de données pour vérifier l'existence d'un produit et lister ses caractéristiques variables."""
+    debut_outil = time.time()
     db = SessionLocal()
     try:
-        # 1. On récupère tous les produits du catalogue
         tous_les_produits = db.query(Produit).all()
-        if not tous_les_produits:
-            return "Le catalogue est vide."
-
-        # 2. On crée une liste des noms de produits (en minuscules pour simplifier)
-        noms_bdd = {p.nom.lower(): p for p in tous_les_produits}
-
-        # 3. On nettoie la recherche (minuscules)
         recherche = nom_produit.lower()
 
-        # 4. RECHERCHE FLOUE : Python cherche ce qui ressemble le plus (même avec des fautes)
-        # cutoff=0.3 signifie qu'on accepte une correspondance à 30% (très tolérant)
-        resultats_proches = difflib.get_close_matches(recherche, noms_bdd.keys(), n=1, cutoff=0.3)
+        # Filtrer les produits qui contiennent le mot clé
+        produits_correspondants = [p for p in tous_les_produits if recherche in p.nom.lower() or recherche in p.categorie.lower()]
 
-        if resultats_proches:
-            # On a trouvé un gagnant !
-            nom_trouve = resultats_proches[0]
-            produit_gagnant = noms_bdd[nom_trouve]
-            
-            tarifs = produit_gagnant.caracteristiques.get("tarifs", {})
-            reponse = f"✅ Produit trouvé en base : {produit_gagnant.nom}\n"
-            reponse += "Voici la grille tarifaire exacte :\n"
-            for duree, prix in tarifs.items():
-                reponse += f"- {duree.replace('_', ' ')} : {prix}€\n"
-            
-            reponse += "\nUtilise ces tarifs pour formuler ta réponse au client."
-            return reponse
-        else:
-            # Si on cherche "tondeuse" et qu'on ne vend que des nacelles
-            return f"❌ Désolé, je n'ai rien trouvé qui ressemble à '{nom_produit}'."
+        if not produits_correspondants:
+            return "❌ INTROUVABLE. Dis au client : 'Je suis désolé, ce produit ne correspond à aucun produit dans notre catalogue, merci de vérifier le nom du produit.'"
+
+        # Regrouper les caractéristiques pour que l'IA sache quoi demander
+        hauteurs, energies, utilisations, capacites, deports = set(), set(), set(), set(), set()
+        
+        for p in produits_correspondants:
+            specs = p.caracteristiques.get("specifications", {})
+            if specs.get("hauteur_travail") and specs.get("hauteur_travail") != "-": hauteurs.add(specs["hauteur_travail"])
+            if specs.get("energie") and specs.get("energie") != "-": energies.add(specs["energie"])
+            if specs.get("utilisation") and specs.get("utilisation") != "-": utilisations.add(specs["utilisation"])
+            if specs.get("capacite") and specs.get("capacite") != "-": capacites.add(specs["capacite"])
+            if specs.get("deport") and specs.get("deport") != "-": deports.add(specs["deport"])
+
+        reponse = f"✅ Catégorie trouvée. Pour trouver le modèle exact, tu dois demander au client de choisir parmi ces critères (s'ils ne l'ont pas déjà précisé) :\n"
+        if hauteurs: reponse += f"- Hauteurs : {', '.join(sorted(list(hauteurs)))}\n"
+        if energies: reponse += f"- Énergie : {', '.join(list(energies))}\n"
+        if utilisations: reponse += f"- Usage : {', '.join(list(utilisations))}\n"
+        if capacites: reponse += f"- Capacité de levage : {', '.join(list(capacites))}\n"
+        if deports: reponse += f"- Déport : {', '.join(list(deports))}\n"
+        
+        return reponse
 
     except Exception as e:
         return f"Erreur de recherche : {e!s}"
     finally:
         db.close()
-
 @router.post("/")
 async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
     # 1. Vérification du prospect : s'il n'existe pas, on le crée automatiquement
@@ -171,10 +179,11 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
         elif msg["role"] == "agent":
             messages_langchain.append(AIMessage(content=msg["content"]))
 
-    llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0
+    llm = ChatOpenAI(
+    model="gpt-4o", # Le modèle le plus intelligent et performant d'OpenAI
+    api_key=os.getenv("OPEN_IA_KEY"),
+    temperature=0.7,
+    max_retries=3
 )
     outils_disponibles = [consulter_catalogue, transferer_commercial]
     
@@ -192,7 +201,7 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
     
     chain = prompt | llm_with_tools
     
-    reponse_ia = chain.invoke({
+    reponse_ia = await chain.ainvoke({
         "historique": messages_langchain,
         "user_message": requete.message
     })
@@ -208,10 +217,10 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
         if nom_outil == "preparer_devis":
             # 1. L'IA a récolté TOUTES les informations de l'enquête !
             nom = args.get("nom", "Non précisé")
-            entreprise = args.get("entreprise", "Non précisé")
+            entreprise = args.get("entreprise", "Non précisé") # 👈 Correspond maintenant au modèle !
             email = args.get("email", "Non précisé")
-            telephone = args.get("telephone", "Non précisé")
-            produit = args.get("produit", "Matériel")
+            telephone = args.get("telephone_personnel", "Non précisé") # 👈 Précision du champ
+            produit = args.get("produit", "Matériel") # 👈 Correspond au modèle !
             quantite = int(args.get("quantite", 1))
             dimensions = args.get("dimensions", "Standard")
             duree = args.get("duree", "Non précisée")
@@ -301,23 +310,32 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
             }
 
         elif nom_outil == "consulter_catalogue":
-            # --- NOUVEAU CODE POUR LE CATALOGUE ---
+            print(f"👉 [ETAPE 1] L'IA utilise le catalogue avec : {args}")
+            
             # 1. On interroge la base de données via notre outil
             resultat_catalogue = consulter_catalogue.invoke(args)
+            print(f"📦 [ETAPE 2] Résultat de la BDD : {resultat_catalogue}")
             
-            # 2. On reconstruit l'ordre exact de la conversation pour le 2ème passage
+            # 2. On reconstruit l'ordre exact de la conversation
             messages_complets = [SystemMessage(content=SYSTEM_PROMPT)]
-            messages_complets.extend(messages_langchain) # L'historique passé
-            messages_complets.append(HumanMessage(content=requete.message)) # La demande actuelle
-            messages_complets.append(reponse_ia) # L'intention d'appeler l'outil
+            messages_complets.extend(messages_langchain)
+            messages_complets.append(HumanMessage(content=requete.message))
+            messages_complets.append(reponse_ia)
             messages_complets.append(ToolMessage(
                 content=resultat_catalogue, 
                 tool_call_id=tool_call["id"]
-            )) # Le retour de la base de données
+            ))
             
-            # 3. On rappelle l'IA (elle va lire le prix et répondre naturellement)
-            reponse_finale = llm_with_tools.invoke(messages_complets)
+            print("🧠 [ETAPE 3] Deuxième appel à l'IA en cours (génération de la réponse)...")
+            reponse_finale = await llm_with_tools.ainvoke(messages_complets)
             texte_final = reponse_finale.content
+            
+            print(f"💬 [ETAPE 4] Texte généré par l'IA : '{texte_final}'")
+            
+            # 🚨 SÉCURITÉ : Si l'IA renvoie un texte vide, on force une réponse manuelle
+            if not texte_final or texte_final.strip() == "[]":
+               texte_final = "Pardon, je rencontre un problème technique, je reviens tout de suite."
+               print("⚠️ Alerte : Le texte final était vide. Activation de la phrase de secours.")
 
         elif nom_outil == "transferer_commercial":
             # 1. On met à jour le statut du prospect dans la BDD
