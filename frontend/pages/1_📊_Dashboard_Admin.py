@@ -9,7 +9,10 @@ import time
 # Permet l'import des modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from app.utils.email_sender import envoyer_devis_client
-from app.models.database import SessionLocal, Prospect, Devis
+from app.models.database import SessionLocal, Prospect, Devis, Produit # 👈 Ajout de Produit
+
+# 🚨 AJOUTEZ LE BON CHEMIN VERS VOTRE FONCTION PDF ICI :
+from app.services.pdf_service import generate_devis_pdf
 
 st.set_page_config(page_title="Dashboard Directeur", page_icon="🚀", layout="wide")
 
@@ -197,35 +200,78 @@ if check_password():
                     "Approuver": st.column_config.CheckboxColumn("Approuver", default=False),
                     "Total TTC (€)": st.column_config.NumberColumn("Total TTC (€)", format="%.2f €")
                 },
-                disabled=["ID Devis", "Client", "Total TTC (€)", "Statut", "Création"], 
+                disabled=["ID Devis", "Client", "Statut", "Création"], 
                 hide_index=True,
                 width="stretch"
             )
             
-            # --- 5. ACTION DE VALIDATION MULTIPLE ---
-            devis_selectionnes = df_edite[df_edite["Approuver"] == True]["ID Devis"].tolist()
+            # --- 5. ACTION DE VALIDATION MULTIPLE AVEC GÉNÉRATION PDF ---
+            lignes_cochees = df_edite[df_edite["Approuver"] == True]
             
-            if len(devis_selectionnes) > 0:
+            if not lignes_cochees.empty:
                 st.write("")
-                if st.button(f"✨ Approuver et Envoyer ({len(devis_selectionnes)} devis)"):
-                    with st.spinner('🚀 Sécurisation et envoi des contrats en cours...'):
-                        for devis_id in devis_selectionnes:
+                if st.button(f"✨ Approuver et Envoyer ({len(lignes_cochees)} devis)"):
+                    with st.spinner('🚀 Sécurisation, génération des PDF et envoi en cours...'):
+                        
+                        for index, row in lignes_cochees.iterrows():
+                            devis_id = row["ID Devis"]
+                            nouveau_prix = row["Total TTC (€)"]
+                            
+                            # Récupération en base de données
                             devis_db = db.query(Devis).filter(Devis.devis_id == devis_id).first()
                             prospect_db = db.query(Prospect).filter(Prospect.prospect_id == devis_db.prospect_id).first()
+                            produit_db = db.query(Produit).filter(Produit.produit_id == devis_db.produit_id).first() if devis_db.produit_id else None
                             
-                            dossier_racine = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-                            chemin_pdf = os.path.join(dossier_racine, "generated_pdfs", f"{devis_id}.pdf")
+                            produit_nom = produit_db.nom if produit_db else "Matériel de location"
                             
-                            if os.path.exists(chemin_pdf):
-                                envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
-                                devis_db.status = "Envoyé"
-                                devis_db.date_envoi = datetime.now()
-                            else:
-                                st.error(f"Fichier manquant pour le devis {devis_id}")
+                            if devis_db:
+                                devis_db.prix_total_ttc = nouveau_prix
+                                devis_db.prix_total = nouveau_prix / 1.20 # Calcul du HT
+
+                                # --- PRÉPARATION DES DONNÉES POUR VOTRE FONCTION PDF ---
+                                quantite = devis_db.quantite if devis_db.quantite else 1
+                                prix_ht = devis_db.prix_total
+                                tva = round(nouveau_prix - prix_ht, 2)
+
+                                dict_devis = {
+                                    "devis_id": devis_id,
+                                    "caracteristiques_choisies": devis_db.caracteristiques_choisies or {},
+                                    "duree": devis_db.duree or "Non précisée",
+                                    "quantite": quantite,
+                                    "prix_unitaire": round(prix_ht / quantite, 2),
+                                    "prix_total": round(prix_ht, 2),
+                                    "tva": tva,
+                                    "frais_livraison": 0.0,
+                                    "montant_caution": 0.0,
+                                    "prix_total_ttc": nouveau_prix
+                                }
+
+                                dict_prospect = {
+                                    "entreprise": prospect_db.entreprise or "N/A",
+                                    "nom": prospect_db.nom or "Client",
+                                    "email": prospect_db.email or "",
+                                    "telephone": prospect_db.telephone or ""
+                                }
+
+                                # --- GÉNÉRATION DU PDF VIA VOTRE FONCTION ---
+                                try:
+                                    chemin_pdf = generate_devis_pdf(dict_devis, dict_prospect, produit_nom)
+                                except Exception as e:
+                                    st.error(f"Erreur lors de la création du PDF pour {devis_id} : {e}")
+                                    chemin_pdf = ""
+
+                                # --- ENVOI DE L'EMAIL ---
+                                if os.path.exists(chemin_pdf):
+                                    envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
+                                    devis_db.status = "Envoyé"
+                                    devis_db.date_envoi = datetime.now()
+                                else:
+                                    devis_db.status = "Envoyé (Sans PDF)" 
+                                    st.warning(f"Devis {devis_id} validé, mais le fichier PDF n'a pas pu être généré.")
                                 
                         db.commit()
-                    st.success("🎉 Opération réussie ! Les clients ont reçu leurs contrats.")
-                    time.sleep(2)
+                    st.success("🎉 Opération terminée ! Les devis avec PDF ont été envoyés.")
+                    time.sleep(3)
                     st.rerun()
 
     except Exception as e:

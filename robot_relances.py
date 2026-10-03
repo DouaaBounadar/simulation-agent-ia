@@ -5,135 +5,151 @@ from datetime import datetime, timedelta
 # Permet au script de trouver votre dossier 'app'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-from app.models.database import SessionLocal, Devis, Prospect, RelanceAuto, TacheCommercial,Conversation
-from app.utils.email_sender import envoyer_email_relance
+from app.models.database import SessionLocal, Devis, Prospect, RelanceAuto, TacheCommercial, Conversation
+# On importe la vraie fonction d'envoi d'email depuis ton fichier utils
+from app.utils.email_sender import envoyer_email_relance 
+from apscheduler.schedulers.background import BackgroundScheduler
+import time
+
+# ==========================================
+# 📩 FONCTION SIMULÉE (WHATSAPP)
+# ==========================================
+# (Tu l'ajouteras plus tard si tu as une vraie API WhatsApp)
+
+def envoyer_whatsapp_relance(telephone_client: str, nom_client: str, numero_relance: int, type_relance: str):
+    """Gère l'envoi des messages WhatsApp (Abandon de conversation ou Relance Devis)."""
+    
+    if type_relance == "Abandon":
+        if numero_relance == 1:
+            msg = f"Bonjour {nom_client}, c'est l'assistant Location Pro 👋. On dirait que nous avons été coupés ! Avez-vous quelques minutes pour terminer de préparer votre devis ?"
+        elif numero_relance == 2:
+            msg = f"{nom_client}, votre dossier est en attente. Souhaitez-vous qu'un commercial vous appelle directement pour finaliser votre besoin ?"
+            
+    elif type_relance == "Devis":
+        if numero_relance == 1:
+            msg = f"Bonjour {nom_client} 👋, je vous ai envoyé votre devis par email. L'avez-vous bien reçu ?"
+        elif numero_relance == 2:
+            msg = f"{nom_client}, petit rappel pour votre devis de location. Vous pouvez me poser vos questions ici ou répondre à l'email ! 🤝"
+        elif numero_relance == 3:
+            msg = f"Dernière chance {nom_client} ⚠️ ! Sans validation de votre part, nous devrons annuler le devis demain pour libérer le matériel."
+
+    print(f"💬 [WHATSAPP SIMULÉ au {telephone_client}] Message: {msg}")
+
+
+# ==========================================
+# 🤖 ROBOT PRINCIPAL DE RELANCE
+# ==========================================
 
 def lancer_robot():
     db = SessionLocal()
     maintenant = datetime.now()
     
-    print("🤖 Démarrage du Robot de Relance Automatique...")
+    print("\n🤖 Démarrage du Robot de Relance Automatique (MODE TEST)...")
     
-    # 1. On cherche TOUS les devis qui ont le statut "Envoyé"
-    devis_en_attente = db.query(Devis).filter(Devis.status == "Envoyé").all()
-    
-    if not devis_en_attente:
-        print("💤 Aucun devis en attente de réponse. Le robot se rendort.")
-        
-    for devis in devis_en_attente:
+    # ---------------------------------------------------------
+    # CAS 1 : DEVIS COMPLET (VALIDÉ OU REFUSÉ) -> PROMOTIONS (EMAIL)
+    # ---------------------------------------------------------
+    devis_termines = db.query(Devis).filter(Devis.status.in_(["Validé", "Refusé"])).all()
+    for devis in devis_termines:
         prospect = db.query(Prospect).filter(Prospect.prospect_id == devis.prospect_id).first()
-        date_envoi = devis.date_envoi
-        
-        if not date_envoi:
+        if not prospect.email or not devis.date_envoi:
             continue
             
-        temps_ecoule = maintenant - date_envoi
-        
-        # On compte combien de relances ont DÉJÀ été envoyées pour ce devis
-        nb_relances = db.query(RelanceAuto).filter(
-            RelanceAuto.devis_id == devis.devis_id,
-            RelanceAuto.statut == "Envoyée"
-        ).count()
+        temps_ecoule = maintenant - devis.date_envoi
+        nb_promos = db.query(RelanceAuto).filter(RelanceAuto.devis_id == devis.devis_id, RelanceAuto.contenu_message.like("Promo%")).count()
 
-        # --- RELANCE 1 (8 Heures) ---
-        if nb_relances == 0 and temps_ecoule >= timedelta(hours=8):
-            print(f"📧 [ACTION] Envoi Relance 1 (8h) pour {prospect.nom}")
-            
-            # 👇 L'EMAIL PART VRAIMENT ICI 👇
-            envoyer_email_relance(prospect.email, prospect.nom, 1)
-            
-            nouvelle_relance = RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Relance 1 (8h)")
-            db.add(nouvelle_relance)
+        # Promo 1 : 5 minutes après validation/refus (Test)
+        if nb_promos == 0 and temps_ecoule >= timedelta(minutes=5):
+            envoyer_email_relance(prospect.email, prospect.nom, 1, "Promo")
+            db.add(RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Promo-1"))
             db.commit()
 
-        # --- RELANCE 2 (3 Jours) ---
-        elif nb_relances == 1 and temps_ecoule >= timedelta(days=3):
-            print(f"📧 [ACTION] Envoi Relance 2 (3 jours) pour {prospect.nom}")
-            
-            # 👇 L'EMAIL PART VRAIMENT ICI 👇
-            envoyer_email_relance(prospect.email, prospect.nom, 2)
-            
-            nouvelle_relance = RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Relance 2 (3j)")
-            db.add(nouvelle_relance)
+        # Promo 2 : 10 minutes après validation/refus (Test)
+        elif nb_promos == 1 and temps_ecoule >= timedelta(minutes=10):
+            envoyer_email_relance(prospect.email, prospect.nom, 2, "Promo")
+            db.add(RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Promo-2"))
             db.commit()
 
-        # --- RELANCE 3 (7 Jours) ---
-        elif nb_relances == 2 and temps_ecoule >= timedelta(days=7):
-            print(f"📧 [ACTION] Envoi Relance 3 (7 jours) pour {prospect.nom}. Dernière chance !")
+
+    # ---------------------------------------------------------
+    # CAS 3 : DEVIS ENVOYÉ MAIS SANS RÉPONSE -> EMAIL + WHATSAPP
+    # ---------------------------------------------------------
+    devis_en_attente = db.query(Devis).filter(Devis.status == "Envoyé").all()
+    for devis in devis_en_attente:
+        prospect = db.query(Prospect).filter(Prospect.prospect_id == devis.prospect_id).first()
+        if not devis.date_envoi:
+            continue
             
-            # 👇 L'EMAIL PART VRAIMENT ICI 👇
-            envoyer_email_relance(prospect.email, prospect.nom, 3)
-            
-            nouvelle_relance = RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Relance 3 (7j)")
-            db.add(nouvelle_relance)
+        temps_ecoule = maintenant - devis.date_envoi
+        nb_relances_devis = db.query(RelanceAuto).filter(RelanceAuto.devis_id == devis.devis_id, RelanceAuto.contenu_message.like("Devis%")).count()
+
+        # Relance 1 (5 Minutes) : Email + WhatsApp
+        if nb_relances_devis == 0 and temps_ecoule >= timedelta(minutes=5):
+            if prospect.email: envoyer_email_relance(prospect.email, prospect.nom, 1, "Devis")
+            if prospect.telephone: envoyer_whatsapp_relance(prospect.telephone, prospect.nom, 1, "Devis")
+            db.add(RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Devis-1"))
             db.commit()
 
-        # --- ABANDON & ALERTE COMMERCIAL (Après 8 jours) ---
-        elif nb_relances == 3 and temps_ecoule >= timedelta(days=8):
+        # Relance 2 (30 Minutes) : Email + WhatsApp
+        elif nb_relances_devis == 1 and temps_ecoule >= timedelta(minutes=30):
+            if prospect.email: envoyer_email_relance(prospect.email, prospect.nom, 2, "Devis")
+            if prospect.telephone: envoyer_whatsapp_relance(prospect.telephone, prospect.nom, 2, "Devis")
+            db.add(RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Devis-2"))
+            db.commit()
+
+        # Relance 3 (45 Minutes) : Email + WhatsApp
+        elif nb_relances_devis == 2 and temps_ecoule >= timedelta(minutes=45):
+            if prospect.email: envoyer_email_relance(prospect.email, prospect.nom, 3, "Devis")
+            if prospect.telephone: envoyer_whatsapp_relance(prospect.telephone, prospect.nom, 3, "Devis")
+            db.add(RelanceAuto(devis_id=devis.devis_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Devis-3"))
+            db.commit()
+
+        # Abandon (60 Minutes) -> Tâche Commercial
+        elif nb_relances_devis == 3 and temps_ecoule >= timedelta(minutes=60):
             print(f"🚨 [ALERTE] Aucune réponse de {prospect.nom} ! Transfert au commercial.")
-            
-            # On change le statut pour que le robot arrête de le surveiller
             devis.status = "Sans Réponse"
             prospect.status = "À rappeler"
-            
-            # On crée une tâche EXPLICITE pour le commercial !
-            nouvelle_tache = TacheCommercial(
-                prospect_id=prospect.prospect_id,
-                titre=f"📞 Appeler M/Mme {prospect.nom} d'urgence",
-                description=f"Le client n'a pas répondu au devis {devis.devis_id} après 3 relances automatiques.\nTéléphone: {prospect.telephone}\nEmail: {prospect.email}",
-                date_echeance=maintenant,
-                statut="À faire"
-            )
-            db.add(nouvelle_tache)
+            db.add(TacheCommercial(prospect_id=prospect.prospect_id, titre=f"📞 Appeler M/Mme {prospect.nom} d'urgence", description="Client injoignable après devis.", date_echeance=maintenant, statut="À faire"))
             db.commit()
-# ---------------------------------------------------------
-    # 🕵️‍♂️ PARTIE 2 : DÉTECTION DES CONVERSATIONS ABANDONNÉES
+
+
     # ---------------------------------------------------------
-    print("🔍 Vérification des prospects incomplets...")
-    
-    # On cherche les conversations liées à des prospects toujours "Nouveaux"
+    # CAS 2 : CONVERSATION ABANDONNÉE -> WHATSAPP UNIQUEMENT
+    # ---------------------------------------------------------
     conversations_en_cours = db.query(Conversation).join(Prospect).filter(Prospect.status == "Nouveau").all()
-    
     for conv in conversations_en_cours:
         prospect = conv.prospect
         
-        # Si la conversation a commencé il y a plus d'une heure...
-        if conv.date_debut and (maintenant - conv.date_debut) >= timedelta(hours=1):
-            print(f"⚠️ [ABANDON] Le prospect {prospect.nom} a quitté avant le devis.")
+        # On vérifie si un devis brouillon ou complet existe pour ce prospect, si oui ce n'est pas un abandon de conversation
+        devis_existe = db.query(Devis).filter(Devis.prospect_id == prospect.prospect_id).first()
+        if devis_existe:
+            continue
             
-            # 1. On change son statut pour qu'il apparaisse dans le tableau CRM
-            prospect.status = "À rappeler"
+        if conv.date_debut:
+            temps_ecoule = maintenant - conv.date_debut
+            nb_abandons = db.query(RelanceAuto).filter(RelanceAuto.prospect_id == prospect.prospect_id, RelanceAuto.contenu_message.like("Abandon%")).count()
             
-            # 2. On crée une alerte visible pour le commercial
-            nouvelle_tache = TacheCommercial(
-                prospect_id=prospect.prospect_id,
-                titre=f"⚠️ Prospect incomplet : Appeler {prospect.nom}",
-                description=f"Le prospect a abandonné la discussion avant la fin.\nTéléphone : {prospect.telephone or 'Non renseigné'}\nEmail : {prospect.email or 'Non renseigné'}\nAction : Reprendre la qualification manuellement.",
-                date_echeance=maintenant,
-                statut="À faire"
-            )
-            db.add(nouvelle_tache)
-            db.commit()
-    # ---------------------------------------------------------
+            # Relance WhatsApp Abandon 1 (10 minutes)
+            if nb_abandons == 0 and temps_ecoule >= timedelta(minutes=10):
+                if prospect.telephone: envoyer_whatsapp_relance(prospect.telephone, prospect.nom, 1, "Abandon")
+                db.add(RelanceAuto(prospect_id=prospect.prospect_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Abandon-1"))
+                db.commit()
 
-    print("✅ Fin de l'inspection. À plus tard !")
+            # Relance WhatsApp Abandon 2 (20 minutes)
+            elif nb_abandons == 1 and temps_ecoule >= timedelta(minutes=20):
+                if prospect.telephone: envoyer_whatsapp_relance(prospect.telephone, prospect.nom, 2, "Abandon")
+                db.add(RelanceAuto(prospect_id=prospect.prospect_id, date_planifiee=maintenant, statut="Envoyée", contenu_message="Abandon-2"))
+                db.commit()
+
     db.close()
 
 # --- INITIALISATION DU PLANIFICATEUR ---
-from apscheduler.schedulers.background import BackgroundScheduler
-
 planificateur = BackgroundScheduler()
-
-# On configure le robot pour s'exécuter toutes les 2 minutes pour vos tests
-planificateur.add_job(lancer_robot, 'interval', minutes=2)
+planificateur.add_job(lancer_robot, 'interval', minutes=1)
 
 if __name__ == "__main__":
-    # Si vous lancez ce fichier directement, le planificateur démarre
     planificateur.start()
-    print("⏰ Planificateur de relances démarré. Appuyez sur Ctrl+C pour quitter.")
-    
-    # Garde le script actif pour que le planificateur puisse tourner
-    import time
+    print("⏰ Planificateur de relances démarré (MODE TEST). Appuyez sur Ctrl+C pour quitter.")
     try:
         while True:
             time.sleep(2)

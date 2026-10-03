@@ -36,10 +36,19 @@ def generate_devis_pdf(devis_data: dict, prospect_data: dict, produit_nom: str) 
     story.append(Paragraph(prospect_info, styles['Normal']))
     story.append(Spacer(1, 20))
 
+    # --- CORRECTION DU TABLEAU ---
+    # 1. On formate les caractéristiques
+    caracs = devis_data.get('caracteristiques_choisies') or {}
+    details_str = ", ".join([f"{k}: {v}" for k, v in caracs.items()])
+    
+    # 2. On prépare le texte de la désignation avec des balises HTML pour forcer le retour à la ligne
+    designation_html = f"<b>{produit_nom}</b><br/><font size='9' color='grey'><i>{details_str}</i></font>"
+
     data = [
         ["Désignation", "Durée", "Qté", "Prix Unitaire", "Total HT"],
         [
-            f"{produit_nom}\n({', '.join([f'{k}: {v}' for k, v in (devis_data.get('caracteristiques_choisies') or {}).items()])})",
+            # 3. L'utilisation de Paragraph() ici empêche le texte de déborder
+            Paragraph(designation_html, styles['Normal']), 
             str(devis_data['duree']),
             str(devis_data['quantite']),
             f"{devis_data['prix_unitaire']} €",
@@ -52,12 +61,14 @@ def generate_devis_pdf(devis_data: dict, prospect_data: dict, produit_nom: str) 
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2B6CB0')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'), # 👈 Aligne le texte en haut pour que les colonnes soient propres
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
     ]))
     story.append(t)
     story.append(Spacer(1, 20))
+    # --- FIN CORRECTION DU TABLEAU ---
 
     totals = f"""
     <b>Sous-total HT :</b> {devis_data['prix_total']} €<br/>
