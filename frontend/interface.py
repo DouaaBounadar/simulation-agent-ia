@@ -17,7 +17,10 @@ if "prospect_id" not in st.session_state:
     st.session_state.messages = []
 
 # URL de votre backend FastAPI
-API_URL = "http://127.0.0.1:8000/chat/"
+#API_URL = "http://127.0.0.1:8000/chat/"
+#API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+# URL de votre backend FastAPI (Tunnel temporaire Pinggy)
+API_URL = "https://kyaen-196-115-36-48.run.pinggy-free.link/chat/"
 
 # 1. Affichage de l'historique des messages
 for message in st.session_state.messages:
