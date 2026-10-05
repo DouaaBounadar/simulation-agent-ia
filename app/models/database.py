@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+import os
 
 from sqlalchemy import (
     Column,
@@ -16,7 +17,14 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. CONFIGURATION DE LA CONNEXION POSTGRESQL
 # ⚠️ Remplacez ces valeurs par vos vrais identifiants PostgreSQL
-DATABASE_URL = "postgresql://postgres:douaa%401234@localhost:5432/location_db"
+# DATABASE_URL = "postgresql://postgres:douaa%401234@localhost:5432/location_db"
+
+
+# Render utilisera sa propre variable d'environnement, sinon on utilise la base locale
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://postgres:douaa%401234@localhost:5432/location_db"
+)
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
