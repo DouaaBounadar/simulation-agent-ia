@@ -3,10 +3,11 @@ import sys
 import os
 import requests
 import streamlit as st
+from dotenv import load_dotenv
 
 # 🚨 L'astuce pour permettre l'importation du dossier 'app' depuis 'frontend'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
+load_dotenv()
 # Configuration de la page
 st.set_page_config(page_title="Location Pro IA", page_icon="🏗️")
 st.title("🤖 Assistant Commercial - Location Pro")
@@ -16,8 +17,12 @@ if "prospect_id" not in st.session_state:
     st.session_state.prospect_id = str(uuid.uuid4())
     st.session_state.messages = []
 
-# URL de votre backend FastAPI
-API_URL = "http://127.0.0.1:8000/chat/"
+# URL publique du backend FastAPI, définie dans l'environnement ou les secrets Streamlit.
+try:
+    API_BASE_URL = st.secrets["API_URL"]
+except Exception:
+    API_BASE_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_URL = f"{API_BASE_URL.rstrip('/')}/chat/"
 
 # 1. Affichage de l'historique des messages
 for message in st.session_state.messages:

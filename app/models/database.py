@@ -1,6 +1,8 @@
+import os
 import uuid
 from datetime import datetime
 
+from dotenv import load_dotenv
 from sqlalchemy import (
     Column,
     DateTime,
@@ -15,8 +17,25 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 # 1. CONFIGURATION DE LA CONNEXION POSTGRESQL
-# ⚠️ Remplacez ces valeurs par vos vrais identifiants PostgreSQL
-DATABASE_URL = "postgresql://postgres:douaa%401234@localhost:5432/location_db"
+load_dotenv()
+
+
+def _get_database_url():
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        return database_url
+
+    try:
+        import streamlit as st
+
+        return st.secrets["DATABASE_URL"]
+    except Exception as exc:
+        raise RuntimeError(
+            "Configurez DATABASE_URL dans l'environnement ou dans les secrets Streamlit."
+        ) from exc
+
+
+DATABASE_URL = _get_database_url()
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
