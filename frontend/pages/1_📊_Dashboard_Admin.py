@@ -1,3 +1,4 @@
+import base64
 import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -97,6 +98,30 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] [data-baseweb="select"] > div,
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+        [data-testid="stSidebar"] [data-baseweb="select"] div,
+        [data-testid="stSidebar"] [data-baseweb="select"] span,
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea {
+            color: #000000 !important;
+        }
+        [data-baseweb="popover"] [role="option"] {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 def check_password():
     def password_entered():
         if st.session_state["password"] == "admin123":
@@ -177,6 +202,59 @@ if check_password():
         
         devis_list = db.query(Devis, Prospect).join(Prospect, Devis.prospect_id == Prospect.prospect_id)\
                        .filter(Devis.status.in_(filtre_statut)).all()
+
+        devis_par_option = {
+            f"{devis.devis_id} | {prospect.nom or 'Client'} ({devis.status})": devis
+            for devis, prospect in devis_list
+        }
+        if devis_par_option:
+            devis_choisi = st.sidebar.selectbox(
+                "Devis sélectionné :",
+                options=list(devis_par_option),
+            )
+            devis_selectionne = devis_par_option[devis_choisi]
+
+            chemin_pdf = devis_selectionne.pdf_path or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "generated_pdfs",
+                f"{devis_selectionne.devis_id}.pdf",
+            )
+            if chemin_pdf and os.path.isfile(chemin_pdf):
+                with open(chemin_pdf, "rb") as fichier_pdf:
+                    contenu_pdf = fichier_pdf.read()
+
+                st.sidebar.download_button(
+                    "📥 Télécharger le PDF",
+                    data=contenu_pdf,
+                    file_name=f"devis_{devis_selectionne.devis_id}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+                with st.sidebar.expander("👁️ Voir le PDF"):
+                    pdf_base64 = base64.b64encode(contenu_pdf).decode("utf-8")
+                    st.components.v1.html(
+                        f"""
+                        <iframe
+                            src="data:application/pdf;base64,{pdf_base64}"
+                            width="100%"
+                            height="600"
+                            style="border: none;"
+                        ></iframe>
+                        """,
+                        height=620,
+                        scrolling=True,
+                    )
+            else:
+                st.sidebar.caption("Aucun PDF disponible pour ce devis.")
+
+            devis_verrouille = devis_selectionne.status != "Brouillon"
+            if devis_verrouille:
+                st.sidebar.info(
+                    f"Ce devis est {devis_selectionne.status} et ne peut plus être modifié."
+                )
+        else:
+            devis_verrouille = False
                        
         if not devis_list:
             st.info("Tout est à jour ! Aucun devis ne correspond à ces critères.")
@@ -194,16 +272,28 @@ if check_password():
             
             df = pd.DataFrame(data)
             
-            df_edite = st.data_editor(
-                df,
-                column_config={
-                    "Approuver": st.column_config.CheckboxColumn("Approuver", default=False),
-                    "Total TTC (€)": st.column_config.NumberColumn("Total TTC (€)", format="%.2f €")
-                },
-                disabled=["ID Devis", "Client", "Statut", "Création"], 
-                hide_index=True,
-                width="stretch"
-            )
+            df_brouillons = df[df["Statut"] == "Brouillon"]
+            df_verrouilles = df[df["Statut"] != "Brouillon"]
+
+            if not df_brouillons.empty:
+                df_edite = st.data_editor(
+                    df_brouillons,
+                    column_config={
+                        "Approuver": st.column_config.CheckboxColumn("Approuver", default=False),
+                        "Total TTC (€)": st.column_config.NumberColumn("Total TTC (€)", format="%.2f €")
+                    },
+                    disabled=["ID Devis", "Client", "Statut", "Création"],
+                    hide_index=True,
+                    width="stretch",
+                    key="editeur_devis_brouillons",
+                )
+            else:
+                st.info("Aucun brouillon modifiable ne correspond aux filtres.")
+                df_edite = df_brouillons.copy()
+
+            if not df_verrouilles.empty:
+                st.markdown("#### Devis en lecture seule")
+                st.dataframe(df_verrouilles.drop(columns=["Approuver"]), hide_index=True, width="stretch")
             
             # --- 5. ACTION DE VALIDATION MULTIPLE AVEC GÉNÉRATION PDF ---
             lignes_cochees = df_edite[df_edite["Approuver"] == True]
@@ -219,55 +309,58 @@ if check_password():
                             
                             # Récupération en base de données
                             devis_db = db.query(Devis).filter(Devis.devis_id == devis_id).first()
+                            if not devis_db or devis_db.status != "Brouillon":
+                                st.warning(f"Le devis {devis_id} n'est plus un brouillon ; aucune modification appliquée.")
+                                continue
+
                             prospect_db = db.query(Prospect).filter(Prospect.prospect_id == devis_db.prospect_id).first()
                             produit_db = db.query(Produit).filter(Produit.produit_id == devis_db.produit_id).first() if devis_db.produit_id else None
                             
                             produit_nom = produit_db.nom if produit_db else "Matériel de location"
                             
-                            if devis_db:
-                                devis_db.prix_total_ttc = nouveau_prix
-                                devis_db.prix_total = nouveau_prix / 1.20 # Calcul du HT
+                            devis_db.prix_total_ttc = nouveau_prix
+                            devis_db.prix_total = nouveau_prix / 1.20 # Calcul du HT
 
-                                # --- PRÉPARATION DES DONNÉES POUR VOTRE FONCTION PDF ---
-                                quantite = devis_db.quantite if devis_db.quantite else 1
-                                prix_ht = devis_db.prix_total
-                                tva = round(nouveau_prix - prix_ht, 2)
+                            # --- PRÉPARATION DES DONNÉES POUR VOTRE FONCTION PDF ---
+                            quantite = devis_db.quantite if devis_db.quantite else 1
+                            prix_ht = devis_db.prix_total
+                            tva = round(nouveau_prix - prix_ht, 2)
 
-                                dict_devis = {
-                                    "devis_id": devis_id,
-                                    "caracteristiques_choisies": devis_db.caracteristiques_choisies or {},
-                                    "duree": devis_db.duree or "Non précisée",
-                                    "quantite": quantite,
-                                    "prix_unitaire": round(prix_ht / quantite, 2),
-                                    "prix_total": round(prix_ht, 2),
-                                    "tva": tva,
-                                    "frais_livraison": 0.0,
-                                    "montant_caution": 0.0,
-                                    "prix_total_ttc": nouveau_prix
-                                }
+                            dict_devis = {
+                                "devis_id": devis_id,
+                                "caracteristiques_choisies": devis_db.caracteristiques_choisies or {},
+                                "duree": devis_db.duree or "Non précisée",
+                                "quantite": quantite,
+                                "prix_unitaire": round(prix_ht / quantite, 2),
+                                "prix_total": round(prix_ht, 2),
+                                "tva": tva,
+                                "frais_livraison": 0.0,
+                                "montant_caution": 0.0,
+                                "prix_total_ttc": nouveau_prix
+                            }
 
-                                dict_prospect = {
-                                    "entreprise": prospect_db.entreprise or "N/A",
-                                    "nom": prospect_db.nom or "Client",
-                                    "email": prospect_db.email or "",
-                                    "telephone": prospect_db.telephone or ""
-                                }
+                            dict_prospect = {
+                                "entreprise": prospect_db.entreprise or "N/A",
+                                "nom": prospect_db.nom or "Client",
+                                "email": prospect_db.email or "",
+                                "telephone": prospect_db.telephone or ""
+                            }
 
-                                # --- GÉNÉRATION DU PDF VIA VOTRE FONCTION ---
-                                try:
-                                    chemin_pdf = generate_devis_pdf(dict_devis, dict_prospect, produit_nom)
-                                except Exception as e:
-                                    st.error(f"Erreur lors de la création du PDF pour {devis_id} : {e}")
-                                    chemin_pdf = ""
+                            # --- GÉNÉRATION DU PDF VIA VOTRE FONCTION ---
+                            try:
+                                chemin_pdf = generate_devis_pdf(dict_devis, dict_prospect, produit_nom)
+                            except Exception as e:
+                                st.error(f"Erreur lors de la création du PDF pour {devis_id} : {e}")
+                                chemin_pdf = ""
 
-                                # --- ENVOI DE L'EMAIL ---
-                                if os.path.exists(chemin_pdf):
-                                    envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
-                                    devis_db.status = "Envoyé"
-                                    devis_db.date_envoi = datetime.now()
-                                else:
-                                    devis_db.status = "Envoyé (Sans PDF)" 
-                                    st.warning(f"Devis {devis_id} validé, mais le fichier PDF n'a pas pu être généré.")
+                            # --- ENVOI DE L'EMAIL ---
+                            if os.path.exists(chemin_pdf):
+                                envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
+                                devis_db.status = "Envoyé"
+                                devis_db.date_envoi = datetime.now()
+                            else:
+                                devis_db.status = "Envoyé (Sans PDF)"
+                                st.warning(f"Devis {devis_id} validé, mais le fichier PDF n'a pas pu être généré.")
                                 
                         db.commit()
                     st.success("🎉 Opération terminée ! Les devis avec PDF ont été envoyés.")
