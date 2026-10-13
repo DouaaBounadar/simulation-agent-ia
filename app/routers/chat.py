@@ -1,6 +1,7 @@
 import difflib
 import uuid  # Ajouté pour générer le devis_id
 import os
+from decimal import Decimal
 from fastapi import APIRouter, Depends
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -40,6 +41,13 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ProduitCommande(BaseModel):
+    nom: str = Field(..., description="Nom exact du modèle tel qu'affiché dans le catalogue")
+    quantite: int = Field(..., ge=1, description="Nombre d'unités de ce modèle")
+    prix_unitaire: float = Field(..., gt=0, description="Prix catalogue pour un jour et une unité")
+    dimensions: str = Field(default="Standard", description="Hauteur ou spécificité validée")
+
+
 class preparer_devis(BaseModel):
     """Outil FINAL à utiliser UNIQUEMENT quand TOUTES les étapes de qualification sont terminées."""
     nom: str = Field(..., description="Nom et prénom du client")
@@ -50,11 +58,23 @@ class preparer_devis(BaseModel):
     usage: str = Field(..., description="'Personnel' ou 'Entreprise'")
     adresse_complete: str = Field(..., description="Adresse postale complète")
     ville: str = Field(..., description="Ville pour la livraison")
-    produit: str = Field(..., description="Le modèle exact validé (ex: Nacelle Ciseaux)")
-    dimensions: str = Field(default="Standard", description="Hauteur ou spécificité technique validée (ex: 12m Électrique)")
-    quantite: int = Field(..., description="La quantité souhaitée")
-    duree: str = Field(..., description="La durée de location")
-    montant: float = Field(default=0.0, description="OBLIGATOIREMENT 0.0")
+    produits: list[ProduitCommande] = Field(..., min_length=1, description="Toutes les lignes du panier")
+    duree: str = Field(..., description="Durée de location, par exemple '3 jours' ou '1 semaine'")
+    montant: float = Field(..., ge=0, description="Montant global calculé pour toutes les lignes")
+
+
+def convertir_duree_en_jours(duree: str) -> int:
+    """Convertit une durée de location textuelle en nombre de jours facturables."""
+    correspondance = re.search(r"(\d+)\s*(jour|semaine|mois|an)", duree.lower())
+    if not correspondance:
+        raise ValueError(f"Durée non reconnue : {duree}")
+
+    valeur = int(correspondance.group(1))
+    unite = correspondance.group(2)
+    multiplicateur = {"jour": 1, "semaine": 7, "mois": 30, "an": 365}[unite]
+    return valeur * multiplicateur
+
+
 # class transferer_commercial(BaseModel):
 #     """Outil à utiliser UNIQUEMENT si le client est très en colère, a un problème technique grave, ou s'il refuse catégoriquement de continuer même après tes explications."""
 #     motif: str = Field(..., description="La raison du transfert")
@@ -103,7 +123,9 @@ Une fois la logistique validée, demande une par une :
 🛑 BLOCAGE STRICT : Avant de faire le récapitulatif final, tu DOIS vérifier ton historique pour t'assurer que tu possèdes ABSOLUMENT TOUTES les informations des étapes 2, 3 et 4 (y compris l'adresse de livraison exacte).
 - S'il manque ne serait-ce qu'une seule information : IL EST STRICTEMENT INTERDIT de faire le récapitulatif ou de générer le devis. Tu DOIS exiger la donnée manquante immédiatement. N'accepte JAMAIS de recevoir une information "plus tard".
 - Si le dossier est 100% complet, fais un **récapitulatif clair** et demande : "Est-ce que toutes ces informations sont correctes ?"
-- 🛑 RÈGLE D'EXÉCUTION ABSOLUE : Si le client confirme (ex: "oui", "c'est bon"), tu as l'INTERDICTION STRICTE de lui répondre simplement avec du texte. Tu DOIS IMPÉRATIVEMENT ET IMMÉDIATEMENT déclencher l'outil 'preparer_devis' avec un montant de 0.0. Ne dis pas "je prépare le devis", appelle l'outil directement. C'est le résultat de l'outil qui te dictera la phrase de fin.
+- 🛑 RÈGLE D'EXÉCUTION ABSOLUE : Si le client confirme (ex: "oui", "c'est bon"), tu as l'INTERDICTION STRICTE de lui répondre simplement avec du texte. Tu DOIS IMPÉRATIVEMENT ET IMMÉDIATEMENT déclencher l'outil 'preparer_devis' avec toutes les lignes du panier et le montant global calculé. Ne dis pas "je prépare le devis", appelle l'outil directement. C'est le résultat de l'outil qui te dictera la phrase de fin.
+Avant d'utiliser l'outil preparer_devis, tu DOIS impérativement extraire le prix unitaire de chaque produit depuis le catalogue, faire le calcul (Prix unitaire x Quantité x Durée) pour chaque équipement, et fournir le montant global.
+Pour preparer_devis, transmets chaque équipement dans le tableau 'produits' avec son nom exact, sa quantité, son prix unitaire journalier catalogue et ses dimensions. Le backend recalcule le montant à partir des tarifs catalogue; ne remplace jamais un tarif introuvable par 0.
 Si tu constates dans l'historique que le devis a DÉJÀ été généré, ton rôle strict de qualification est terminé.
 - Ne relance JAMAIS les questions des étapes 1 à 5.
 - Discute NORMALEMENT, naturellement et poliment avec le client.
@@ -135,11 +157,22 @@ def consulter_catalogue(nom_produit: str) -> str:
         # 3. SI TROUVÉ : On liste les noms exacts et leurs spécifications
         liste_modeles = []
         for p in produits_correspondants:
-            specs = p.caracteristiques.get("specifications", {})
+            caracteristiques = p.caracteristiques or {}
+            specs = caracteristiques.get("specifications", {})
+            tarifs = caracteristiques.get("tarifs", {})
             hauteur = specs.get("hauteur_travail", "-")
             capacite = specs.get("capacite", "-")
             energie = specs.get("energie", "-")
-            liste_modeles.append(f"- Modèle : {p.nom} (Hauteur: {hauteur}, Capacité: {capacite}, Énergie: {energie})")
+            prix_journalier = tarifs.get("1_jour")
+            tarif_catalogue = (
+                f"Prix journalier catalogue: {prix_journalier} €"
+                if prix_journalier is not None
+                else "Prix journalier indisponible dans le catalogue"
+            )
+            liste_modeles.append(
+                f"- Modèle : {p.nom} (Hauteur: {hauteur}, Capacité: {capacite}, "
+                f"Énergie: {energie}; {tarif_catalogue})"
+            )
 
         reponse = (
             "✅ Catégorie trouvée. Voici la liste des modèles exacts :\n" + "\n".join(liste_modeles) +
@@ -209,19 +242,31 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
     ])
     
     chain = prompt | llm_with_tools
+
+    messages_complets = [SystemMessage(content=SYSTEM_PROMPT)]
+    messages_complets.extend(messages_langchain)
+    messages_complets.append(HumanMessage(content=requete.message))
     
     reponse_ia = await chain.ainvoke({
         "historique": messages_langchain,
         "user_message": requete.message
     })
 
-    texte_final = reponse_ia.content
+    # 4. Traiter tous les tours d'outils jusqu'à obtenir une réponse texte.
+    nombre_tours_outils = 0
+    tentatives_reponse_vide = 0
+    while reponse_ia.tool_calls or not reponse_ia.content:
+        if not reponse_ia.tool_calls:
+            tentatives_reponse_vide += 1
+            if tentatives_reponse_vide >= 3:
+                break
+            reponse_ia = await llm_with_tools.ainvoke(messages_complets)
+            continue
 
-    # 4. Exécution de tous les outils demandés par le modèle
-    if reponse_ia.tool_calls:
-        messages_complets = [SystemMessage(content=SYSTEM_PROMPT)]
-        messages_complets.extend(messages_langchain)
-        messages_complets.append(HumanMessage(content=requete.message))
+        nombre_tours_outils += 1
+        if nombre_tours_outils > 8:
+            raise RuntimeError("L'IA a dépassé la limite de 8 tours d'appels d'outils.")
+
         messages_complets.append(reponse_ia)
 
         for tool_call in reponse_ia.tool_calls:
@@ -236,70 +281,92 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
                 entreprise = args.get("entreprise", "Non précisé")
                 email = args.get("email", "Non précisé")
                 telephone = args.get("telephone_personnel", "Non précisé")
-                produit = args.get("produit", "Matériel")
-                quantite = int(args.get("quantite", 1))
-                dimensions = args.get("dimensions", "Standard")
                 duree = str(args.get("duree", "1 jour")).lower().strip()
+                panier = args.get("produits", [])
 
-                prospect.nom = nom
-                prospect.entreprise = entreprise
-                prospect.email = email
-                prospect.telephone = telephone
-                prospect.status = "Qualifié"
+                try:
+                    duree_jours = convertir_duree_en_jours(duree)
+                    if not panier:
+                        raise ValueError("Le panier ne contient aucun produit.")
 
-                produit_db = db.query(Produit).filter(Produit.nom.ilike(f"%{produit}%")).first()
-                produit_id = produit_db.produit_id if produit_db else None
-                montant_ht = 0.0
-                if produit_db and produit_db.caracteristiques:
-                    try:
-                        tarifs = produit_db.caracteristiques.get("tarifs", {})
-                        nombres = re.findall(r"\d+", duree)
-                        nb = int(nombres[0]) if nombres else 1
-                        cle_tarif = "1_jour"
-                        if "jour" in duree:
-                            cle_tarif = f"{nb}_jour" if nb == 1 else f"{nb}_jours"
-                        elif "semain" in duree:
-                            cle_tarif = f"{nb}_semaine" if nb == 1 else f"{nb}_semaines"
-                        elif "mois" in duree:
-                            cle_tarif = f"{nb}_mois"
-                        elif "an" in duree:
-                            cle_tarif = f"{nb}_an" if nb == 1 else f"{nb}_ans"
+                    lignes_panier = []
+                    montant_ht_decimal = Decimal("0")
+                    for ligne in panier:
+                        nom_produit = ligne["nom"]
+                        quantite_ligne = int(ligne["quantite"])
+                        produit_db = db.query(Produit).filter(Produit.nom == nom_produit).first()
+                        if not produit_db:
+                            raise ValueError(f"Produit absent du catalogue : {nom_produit}")
 
-                        prix_unitaire = float(tarifs.get(cle_tarif, 0.0))
-                        if prix_unitaire == 0.0 and "1_jour" in tarifs:
-                            prix_unitaire = float(tarifs["1_jour"]) * nb if "jour" in duree else float(tarifs["1_jour"])
-                        montant_ht = prix_unitaire * quantite
-                    except Exception as e:
-                        print(f"⚠️ Erreur de calcul du prix : {e}")
+                        caracteristiques = produit_db.caracteristiques or {}
+                        tarif_journalier = (caracteristiques.get("tarifs") or {}).get("1_jour")
+                        if tarif_journalier is None or Decimal(str(tarif_journalier)) <= 0:
+                            raise ValueError(f"Tarif journalier indisponible pour : {nom_produit}")
 
-                prospect.montant_en_cours = montant_ht
-                numero_devis = f"DEV-{datetime.now().strftime('%y%m%d')}-{random.randint(1000, 9999)}"
-                nouveau_devis = Devis(
-                    devis_id=numero_devis,
-                    prospect_id=prospect.prospect_id,
-                    produit_id=produit_id,
-                    quantite=quantite,
-                    caracteristiques_choisies={"dimensions": dimensions},
-                    duree=duree,
-                    prix_total=montant_ht,
-                    prix_total_ttc=round(montant_ht * 1.20, 2),
-                    status="Brouillon"
-                )
-                db.add(nouveau_devis)
-                db.commit()
-                envoyer_notification_directeur(
-                    devis_id=numero_devis,
-                    nom_client=prospect.nom,
-                    montant=montant_ht,
-                    email_client=prospect.email,
-                    telephone_client=prospect.telephone
-                )
-                resultat_outil = (
-                    f"Devis {numero_devis} préparé en brouillon avec succès. Ne mentionne AUCUN PRIX. "
-                    "Dis EXACTEMENT et UNIQUEMENT au client que son dossier a été transmis à l'équipe "
-                    "commerciale pour validation et qu'il recevra son devis par email."
-                )
-                print(f"📦 Résultat de l'outil Devis : {resultat_outil}")
+                        prix_unitaire_journalier = Decimal(str(tarif_journalier))
+                        sous_total = (
+                            prix_unitaire_journalier
+                            * quantite_ligne
+                            * duree_jours
+                        )
+                        montant_ht_decimal += sous_total
+                        lignes_panier.append({
+                            "produit_id": produit_db.produit_id,
+                            "nom": produit_db.nom,
+                            "quantite": quantite_ligne,
+                            "prix_unitaire_journalier": float(prix_unitaire_journalier),
+                            "duree_jours": duree_jours,
+                            "dimensions": ligne.get("dimensions", "Standard"),
+                            "sous_total_ht": float(sous_total)
+                        })
+
+                    montant_ht = float(montant_ht_decimal.quantize(Decimal("0.01")))
+                    total_quantite = sum(ligne["quantite"] for ligne in lignes_panier)
+                    prix_unitaire_moyen = montant_ht_decimal / (total_quantite * duree_jours)
+                    montant_ttc = float((montant_ht_decimal * Decimal("1.20")).quantize(Decimal("0.01")))
+                    premier_produit_id = lignes_panier[0]["produit_id"] if len(lignes_panier) == 1 else None
+
+                    prospect.nom = nom
+                    prospect.entreprise = entreprise
+                    prospect.email = email
+                    prospect.telephone = telephone
+                    prospect.status = "Qualifié"
+                    prospect.montant_en_cours = montant_ht
+
+                    numero_devis = f"DEV-{datetime.now().strftime('%y%m%d')}-{random.randint(1000, 9999)}"
+                    nouveau_devis = Devis(
+                        devis_id=numero_devis,
+                        prospect_id=prospect.prospect_id,
+                        produit_id=premier_produit_id,
+                        quantite=total_quantite,
+                        caracteristiques_choisies={"produits": lignes_panier},
+                        duree=duree,
+                        prix_unitaire=float(prix_unitaire_moyen.quantize(Decimal("0.01"))),
+                        prix_total=montant_ht,
+                        prix_total_ttc=montant_ttc,
+                        status="Brouillon"
+                    )
+                    db.add(nouveau_devis)
+                    db.commit()
+                    envoyer_notification_directeur(
+                        devis_id=numero_devis,
+                        nom_client=prospect.nom,
+                        montant=montant_ht,
+                        email_client=prospect.email,
+                        telephone_client=prospect.telephone
+                    )
+                    resultat_outil = (
+                        f"Devis {numero_devis} préparé en brouillon avec un total HT de {montant_ht:.2f} €. "
+                        "Ne mentionne aucun prix au client. Dis EXACTEMENT et UNIQUEMENT que son dossier a "
+                        "été transmis à l'équipe commerciale pour validation et qu'il recevra son devis par email."
+                    )
+                    print(f"📦 Résultat de l'outil Devis : {resultat_outil}")
+                except (KeyError, TypeError, ValueError, ArithmeticError) as e:
+                    db.rollback()
+                    resultat_outil = (
+                        f"Devis non créé : {e}. Demande les informations manquantes ou utilise les noms "
+                        "exacts et les tarifs journaliers fournis par consulter_catalogue."
+                    )
 
             elif nom_outil == "consulter_catalogue":
                 print(f"👉 L'IA utilise le catalogue avec : {args}")
@@ -315,13 +382,13 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
                 tool_call_id=tool_call["id"]
             ))
 
-        print("🧠 Tous les outils ont été traités; génération de la réponse finale...")
-        reponse_finale = await llm_with_tools.ainvoke(messages_complets)
-        texte_final = reponse_finale.content
+        print("🧠 Tous les outils de ce tour sont traités; nouvel appel au modèle...")
+        reponse_ia = await llm_with_tools.ainvoke(messages_complets)
 
-        if not texte_final or texte_final.strip() == "[]":
-            texte_final = "Pardon, je rencontre un problème technique, je reviens tout de suite."
-            print("⚠️ Alerte : Le texte final était vide. Activation de la phrase de secours.")
+    texte_final = reponse_ia.content
+    if not texte_final or (isinstance(texte_final, str) and texte_final.strip() == "[]"):
+        texte_final = "Pardon, je rencontre un problème technique, je reviens tout de suite."
+        print("⚠️ Alerte : aucune réponse texte valide après le traitement des outils.")
 
         # elif nom_outil == "transferer_commercial":
         #     # 1. On met à jour le statut du prospect dans la BDD
@@ -345,10 +412,6 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
             
         #     # 3. La réponse à afficher au client
         #     texte_final = f"✅ C'est bien noté. J'ai alerté notre équipe commerciale (Motif : {args.get('motif')}). Un expert va vous recontacter très rapidement !"
-
-    else:
-        # Si l'IA n'appelle aucun outil (elle dit juste bonjour ou négocie)
-        texte_final = reponse_ia.content
 
     # 5. Sauvegarde dans JSONB
     nouvel_historique = list(historique_actuel)
