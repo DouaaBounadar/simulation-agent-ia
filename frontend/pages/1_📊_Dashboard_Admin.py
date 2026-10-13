@@ -38,6 +38,16 @@ st.markdown("""
             color: #f8fafc !important;
         }
 
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea,
+        [data-testid="stSidebar"] [data-baseweb="select"] > div {
+            color: #000000 !important;
+            background-color: #ffffff !important;
+        }
+        [data-testid="stSidebar"] [data-baseweb="select"] * {
+            color: #000000 !important;
+        }
+
         /* 3. Nettoyage de l'UI Streamlit */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
@@ -116,6 +126,47 @@ def check_password():
         return False
     return True
 
+def afficher_tableau_lecture_seule(titre: str, devis_list: list, cle: str):
+    st.markdown(f"### {titre}")
+    if not devis_list:
+        st.info("Aucun devis dans cette section pour les filtres sélectionnés.")
+        return
+
+    lignes = [{
+        "ID Devis": devis.devis_id,
+        "Client": prospect.nom,
+        "Total TTC (€)": float(devis.prix_total_ttc) if devis.prix_total_ttc else 0.0,
+        "Statut": devis.status,
+        "Création": devis.date_creation.strftime("%d/%m/%Y") if devis.date_creation else "N/A"
+    } for devis, prospect in devis_list]
+    st.dataframe(pd.DataFrame(lignes), hide_index=True, width="stretch")
+
+    colonne_choix, colonne_telechargement = st.columns([3, 1])
+    with colonne_choix:
+        choix_pdf = st.selectbox(
+            "Choisir un devis à télécharger :",
+            options=[devis.devis_id for devis, _ in devis_list],
+            key=f"telecharger_{cle}"
+        )
+
+    dossier_pdfs = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../..", "generated_pdfs")
+    )
+    chemin_pdf = os.path.join(dossier_pdfs, f"{choix_pdf}.pdf")
+    if os.path.isfile(chemin_pdf):
+        with open(chemin_pdf, "rb") as fichier_pdf:
+            contenu_pdf = fichier_pdf.read()
+        with colonne_telechargement:
+            st.download_button(
+                "Télécharger le PDF",
+                data=contenu_pdf,
+                file_name=f"{choix_pdf}.pdf",
+                mime="application/pdf",
+                key=f"bouton_telecharger_{cle}"
+            )
+    else:
+        st.warning(f"Le PDF local du devis {choix_pdf} est introuvable.")
+
 if check_password():
     st.markdown("<h1>🚀 Centre de Pilotage <em>Location Pro</em></h1>", unsafe_allow_html=True)
     st.markdown("### Vision globale et validation des ventes")
@@ -150,7 +201,7 @@ if check_password():
         filtre_statut = st.sidebar.multiselect(
             "Visualiser par statut :",
             options=["Brouillon", "Envoyé", "Accepté", "Annulé", "Rejeté"],
-            default=["Brouillon", "Accepté"] 
+            default=["Brouillon", "Envoyé", "Accepté", "Annulé", "Rejeté"]
         )
 
         # --- 3. GRAPHIQUE VISUEL ---
@@ -171,108 +222,123 @@ if check_password():
 
         st.divider()
 
-        # --- 4. TABLEAU INTERACTIF (Cases à cocher) ---
-        st.markdown("### 📋 Validation Express")
-        st.caption("Sélectionnez les contrats à approuver et validez-les en un seul clic.")
-        
-        devis_list = db.query(Devis, Prospect).join(Prospect, Devis.prospect_id == Prospect.prospect_id)\
-                       .filter(Devis.status.in_(filtre_statut)).all()
-                       
-        if not devis_list:
-            st.info("Tout est à jour ! Aucun devis ne correspond à ces critères.")
+        devis_visibles = db.query(Devis, Prospect).join(
+            Prospect, Devis.prospect_id == Prospect.prospect_id
+        ).filter(Devis.status.in_(filtre_statut)).all()
+        devis_par_statut = {
+            statut: [(devis, prospect) for devis, prospect in devis_visibles if devis.status == statut]
+            for statut in ("Accepté", "Rejeté", "Envoyé", "Brouillon")
+        }
+
+        st.markdown("### 📚 Historique des devis")
+        afficher_tableau_lecture_seule(
+            "Devis acceptés et rejetés",
+            devis_par_statut["Accepté"] + devis_par_statut["Rejeté"],
+            "historique"
+        )
+
+        st.divider()
+        afficher_tableau_lecture_seule(
+            "📨 En attente de réponse",
+            devis_par_statut["Envoyé"],
+            "envoyes"
+        )
+
+        st.divider()
+        st.markdown("### 📋 Validation Express — Brouillons")
+        st.caption("Modifiez le prix dans le tableau, puis cochez les devis à envoyer.")
+        brouillons = devis_par_statut["Brouillon"]
+        if not brouillons:
+            st.info("Aucun brouillon à valider pour les filtres sélectionnés.")
         else:
-            data = []
-            for d, p in devis_list:
-                data.append({
-                    "Approuver": False,
-                    "ID Devis": d.devis_id,
-                    "Client": p.nom,
-                    "Total TTC (€)": float(d.prix_total_ttc) if d.prix_total_ttc else 0.0,
-                    "Statut": d.status,
-                    "Création": d.date_creation.strftime("%d/%m/%Y") if d.date_creation else "N/A"
-                })
-            
-            df = pd.DataFrame(data)
-            
+            donnees_brouillons = [{
+                "Approuver": False,
+                "ID Devis": devis.devis_id,
+                "Client": prospect.nom,
+                "Total TTC (€)": float(devis.prix_total_ttc) if devis.prix_total_ttc else 0.0,
+                "Statut": devis.status,
+                "Création": devis.date_creation.strftime("%d/%m/%Y") if devis.date_creation else "N/A"
+            } for devis, prospect in brouillons]
             df_edite = st.data_editor(
-                df,
+                pd.DataFrame(donnees_brouillons),
                 column_config={
                     "Approuver": st.column_config.CheckboxColumn("Approuver", default=False),
                     "Total TTC (€)": st.column_config.NumberColumn("Total TTC (€)", format="%.2f €")
                 },
-                disabled=["ID Devis", "Client", "Statut", "Création"], 
+                disabled=["ID Devis", "Client", "Statut", "Création"],
                 hide_index=True,
-                width="stretch"
+                width="stretch",
+                key="validation_brouillons"
             )
-            
-            # --- 5. ACTION DE VALIDATION MULTIPLE AVEC GÉNÉRATION PDF ---
+
             lignes_cochees = df_edite[df_edite["Approuver"] == True]
-            
-            if not lignes_cochees.empty:
-                st.write("")
-                if st.button(f"✨ Approuver et Envoyer ({len(lignes_cochees)} devis)"):
-                    with st.spinner('🚀 Sécurisation, génération des PDF et envoi en cours...'):
-                        
-                        for index, row in lignes_cochees.iterrows():
-                            devis_id = row["ID Devis"]
-                            nouveau_prix = row["Total TTC (€)"]
-                            
-                            # Récupération en base de données
-                            devis_db = db.query(Devis).filter(Devis.devis_id == devis_id).first()
-                            prospect_db = db.query(Prospect).filter(Prospect.prospect_id == devis_db.prospect_id).first()
-                            produit_db = db.query(Produit).filter(Produit.produit_id == devis_db.produit_id).first() if devis_db.produit_id else None
-                            
-                            produit_nom = produit_db.nom if produit_db else "Matériel de location"
-                            
-                            if devis_db:
-                                devis_db.prix_total_ttc = nouveau_prix
-                                devis_db.prix_total = nouveau_prix / 1.20 # Calcul du HT
+            if not lignes_cochees.empty and st.button(
+                f"✨ Approuver et Envoyer ({len(lignes_cochees)} devis)",
+                key="approuver_brouillons"
+            ):
+                with st.spinner("🚀 Sécurisation, génération des PDF et envoi en cours..."):
+                    for _, row in lignes_cochees.iterrows():
+                        devis_id = row["ID Devis"]
+                        nouveau_prix = row["Total TTC (€)"]
+                        devis_db = db.query(Devis).filter(Devis.devis_id == devis_id).first()
+                        if not devis_db or devis_db.status != "Brouillon":
+                            continue
 
-                                # --- PRÉPARATION DES DONNÉES POUR VOTRE FONCTION PDF ---
-                                quantite = devis_db.quantite if devis_db.quantite else 1
-                                prix_ht = devis_db.prix_total
-                                tva = round(nouveau_prix - prix_ht, 2)
+                        prospect_db = db.query(Prospect).filter(
+                            Prospect.prospect_id == devis_db.prospect_id
+                        ).first()
+                        if not prospect_db:
+                            continue
+                        produit_db = db.query(Produit).filter(
+                            Produit.produit_id == devis_db.produit_id
+                        ).first() if devis_db.produit_id else None
+                        produit_nom = produit_db.nom if produit_db else "Matériel de location"
 
-                                dict_devis = {
-                                    "devis_id": devis_id,
-                                    "caracteristiques_choisies": devis_db.caracteristiques_choisies or {},
-                                    "duree": devis_db.duree or "Non précisée",
-                                    "quantite": quantite,
-                                    "prix_unitaire": round(prix_ht / quantite, 2),
-                                    "prix_total": round(prix_ht, 2),
-                                    "tva": tva,
-                                    "frais_livraison": 0.0,
-                                    "montant_caution": 0.0,
-                                    "prix_total_ttc": nouveau_prix
-                                }
+                        devis_db.prix_total_ttc = nouveau_prix
+                        devis_db.prix_total = nouveau_prix / 1.20
+                        quantite = devis_db.quantite if devis_db.quantite else 1
+                        prix_ht = devis_db.prix_total
+                        dict_devis = {
+                            "devis_id": devis_id,
+                            "caracteristiques_choisies": devis_db.caracteristiques_choisies or {},
+                            "duree": devis_db.duree or "Non précisée",
+                            "quantite": quantite,
+                            "prix_unitaire": round(prix_ht / quantite, 2),
+                            "prix_total": round(prix_ht, 2),
+                            "tva": round(nouveau_prix - prix_ht, 2),
+                            "frais_livraison": 0.0,
+                            "montant_caution": 0.0,
+                            "prix_total_ttc": nouveau_prix
+                        }
+                        dict_prospect = {
+                            "entreprise": prospect_db.entreprise or "N/A",
+                            "nom": prospect_db.nom or "Client",
+                            "email": prospect_db.email or "",
+                            "telephone": prospect_db.telephone or ""
+                        }
 
-                                dict_prospect = {
-                                    "entreprise": prospect_db.entreprise or "N/A",
-                                    "nom": prospect_db.nom or "Client",
-                                    "email": prospect_db.email or "",
-                                    "telephone": prospect_db.telephone or ""
-                                }
+                        try:
+                            chemin_pdf = generate_devis_pdf(dict_devis, dict_prospect, produit_nom)
+                        except Exception as e:
+                            st.error(f"Erreur lors de la création du PDF pour {devis_id} : {e}")
+                            continue
 
-                                # --- GÉNÉRATION DU PDF VIA VOTRE FONCTION ---
-                                try:
-                                    chemin_pdf = generate_devis_pdf(dict_devis, dict_prospect, produit_nom)
-                                except Exception as e:
-                                    st.error(f"Erreur lors de la création du PDF pour {devis_id} : {e}")
-                                    chemin_pdf = ""
+                        if os.path.isfile(chemin_pdf):
+                            email_envoye = envoyer_devis_client(
+                                prospect_db.email, prospect_db.nom, chemin_pdf
+                            )
+                            if email_envoye:
+                                devis_db.status = "Envoyé"
+                                devis_db.date_envoi = datetime.now()
+                            else:
+                                st.warning(f"L'email du devis {devis_id} n'a pas pu être envoyé.")
+                        else:
+                            st.warning(f"Le PDF du devis {devis_id} est introuvable.")
 
-                                # --- ENVOI DE L'EMAIL ---
-                                if os.path.exists(chemin_pdf):
-                                    envoyer_devis_client(prospect_db.email, prospect_db.nom, chemin_pdf)
-                                    devis_db.status = "Envoyé"
-                                    devis_db.date_envoi = datetime.now()
-                                else:
-                                    devis_db.status = "Envoyé (Sans PDF)" 
-                                    st.warning(f"Devis {devis_id} validé, mais le fichier PDF n'a pas pu être généré.")
-                                
-                        db.commit()
-                    st.success("🎉 Opération terminée ! Les devis avec PDF ont été envoyés.")
-                    time.sleep(3)
-                    st.rerun()
+                    db.commit()
+                st.success("Traitement des brouillons terminé.")
+                time.sleep(3)
+                st.rerun()
 
     except Exception as e:
         st.error(f"Erreur système critique : {e}")
