@@ -16,6 +16,7 @@ from app.models.database import (
 from app.schemas.devis import DevisCreate, DevisResponse
 from app.services.pdf_service import generate_devis_pdf
 from app.services.pricing import calculate_devis_totals
+from app.utils.email_sender import envoyer_email_feedback_devis
 
 router = APIRouter(
     prefix="/devis",
@@ -28,6 +29,23 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _action_devis_deja_traitee() -> HTMLResponse:
+    return HTMLResponse(
+        content=(
+            "<h1>Action impossible : Ce devis a déjà été traité de manière définitive. "
+            "Vous ne pouvez plus modifier votre choix.</h1>"
+        ),
+        status_code=409
+    )
+
+
+def _devis_non_envoye() -> HTMLResponse:
+    return HTMLResponse(
+        content="<h1>Action impossible : seul un devis envoyé peut être traité.</h1>",
+        status_code=409
+    )
 
 @router.post("", response_model=DevisResponse, status_code=status.HTTP_201_CREATED)
 def creer_devis(devis: DevisCreate, db: Session = Depends(get_db)):
@@ -100,13 +118,29 @@ def accepter_devis_email(devis_id: str, db: Session = Depends(get_db)):
     
     if not devis:
         return HTMLResponse(content="<h1>❌ Devis introuvable</h1>", status_code=404)
-        
-    if devis.status == "Accepté":
-        return HTMLResponse(content="<h1 style='color: #28a745;'>✅ Ce devis a déjà été accepté !</h1><p>Notre équipe prépare votre livraison.</p>")
+
+    if devis.status in {"Accepté", "Rejeté"}:
+        return _action_devis_deja_traitee()
+    if devis.status != "Envoyé":
+        return _devis_non_envoye()
 
     # 1. Mise à jour du Devis
+    date_acceptation = datetime.now(timezone.utc)
+    mise_a_jour = db.query(Devis).filter(
+        Devis.devis_id == devis_id,
+        Devis.status == "Envoyé"
+    ).update(
+        {Devis.status: "Accepté", Devis.date_acceptation: date_acceptation},
+        synchronize_session=False
+    )
+    if mise_a_jour != 1:
+        db.rollback()
+        devis_actuel = db.query(Devis).filter(Devis.devis_id == devis_id).first()
+        if devis_actuel and devis_actuel.status in {"Accepté", "Rejeté"}:
+            return _action_devis_deja_traitee()
+        return _devis_non_envoye()
     devis.status = "Accepté"
-    devis.date_acceptation = datetime.now(timezone.utc)
+    devis.date_acceptation = date_acceptation
     
     # 2. Mise à jour du Prospect (Devient CLIENT)
     prospect = db.query(Prospect).filter(Prospect.prospect_id == devis.prospect_id).first()
@@ -134,6 +168,10 @@ def accepter_devis_email(devis_id: str, db: Session = Depends(get_db)):
         relance.statut = "Annulée"
 
     db.commit()
+    if prospect and prospect.email:
+        envoyer_email_feedback_devis(
+            prospect.email, prospect.nom or "Client", devis_id, accepte=True
+        )
     
     # 5. Affichage de la page de succès pour le client
     return HTMLResponse(content=f"""
@@ -157,13 +195,29 @@ def refuser_devis_email(devis_id: str, db: Session = Depends(get_db)):
     
     if not devis:
         return HTMLResponse(content="<h1>❌ Devis introuvable</h1>", status_code=404)
-        
-    if devis.status == "Rejeté":
-        return HTMLResponse(content="<h1 style='color: #dc3545;'>❌ Ce devis est déjà marqué comme refusé.</h1>")
+
+    if devis.status in {"Accepté", "Rejeté"}:
+        return _action_devis_deja_traitee()
+    if devis.status != "Envoyé":
+        return _devis_non_envoye()
 
     # 1. Mise à jour du Devis
+    date_rejet = datetime.now(timezone.utc)
+    mise_a_jour = db.query(Devis).filter(
+        Devis.devis_id == devis_id,
+        Devis.status == "Envoyé"
+    ).update(
+        {Devis.status: "Rejeté", Devis.date_rejet: date_rejet},
+        synchronize_session=False
+    )
+    if mise_a_jour != 1:
+        db.rollback()
+        devis_actuel = db.query(Devis).filter(Devis.devis_id == devis_id).first()
+        if devis_actuel and devis_actuel.status in {"Accepté", "Rejeté"}:
+            return _action_devis_deja_traitee()
+        return _devis_non_envoye()
     devis.status = "Rejeté"
-    devis.date_rejet = datetime.now(timezone.utc)
+    devis.date_rejet = date_rejet
     
     # 2. Mise à jour du Prospect
     prospect = db.query(Prospect).filter(Prospect.prospect_id == devis.prospect_id).first()
@@ -180,6 +234,10 @@ def refuser_devis_email(devis_id: str, db: Session = Depends(get_db)):
         relance.statut = "Annulée"
         
     db.commit()
+    if prospect and prospect.email:
+        envoyer_email_feedback_devis(
+            prospect.email, prospect.nom or "Client", devis_id, accepte=False
+        )
     
     # 4. Affichage de la page d'annulation
     return HTMLResponse(content=f"""

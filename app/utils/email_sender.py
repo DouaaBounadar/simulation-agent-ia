@@ -128,6 +128,58 @@ def envoyer_devis_client(email_client: str, nom_client: str, chemin_pdf: str):
     except Exception as e:
         print(f"❌ Erreur lors de l'envoi de l'email : {e}")
         return False
+
+
+def envoyer_email_feedback_devis(
+    email_client: str,
+    nom_client: str,
+    devis_id: str,
+    accepte: bool
+) -> bool:
+    """Confirme l'acceptation d'un devis ou demande le motif d'un refus."""
+    email_expediteur = os.getenv("EMAIL_SENDER")
+    mot_de_passe = os.getenv("EMAIL_PASSWORD")
+
+    if not email_expediteur or not mot_de_passe or not email_client:
+        print("❌ Email de feedback non envoyé : configuration ou adresse manquante.")
+        return False
+
+    if accepte:
+        sujet = f"Merci pour votre confiance - devis {devis_id}"
+        corps = (
+            f"Bonjour {nom_client},\n\n"
+            f"Merci d'avoir accepté le devis {devis_id} et pour votre confiance.\n"
+            "Notre équipe vous recontactera très prochainement pour organiser la suite de la procédure.\n\n"
+            "Cordialement,\nL'équipe Location Pro"
+        )
+    else:
+        sujet = f"Votre retour sur le devis {devis_id}"
+        corps = (
+            f"Bonjour {nom_client},\n\n"
+            f"Nous avons bien pris en compte votre refus du devis {devis_id}.\n"
+            "Pour nous aider à vous proposer une solution adaptée, pourriez-vous répondre à cet email "
+            "en nous indiquant ce qui a motivé votre décision (prix, délai, besoin ou autre point) et "
+            "la difficulté que nous pourrions résoudre ?\n\n"
+            "Merci pour votre retour.\n\nCordialement,\nL'équipe Location Pro"
+        )
+
+    message = EmailMessage()
+    message["Subject"] = sujet
+    message["From"] = email_expediteur
+    message["To"] = email_client
+    message.set_content(corps)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(email_expediteur, mot_de_passe)
+            smtp.send_message(message)
+        print(f"✅ Email de feedback envoyé à {email_client} pour le devis {devis_id}.")
+        return True
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi de l'email de feedback : {e}")
+        return False
+
+
 def envoyer_notification_directeur(devis_id: str, nom_client: str, montant: float, email_client: str = "Non renseigné", telephone_client: str = "Non renseigné"):
     """Envoie un email au directeur pour le prévenir qu'un devis attend sa validation."""
     email_directeur = os.getenv("EMAIL_SENDER")
