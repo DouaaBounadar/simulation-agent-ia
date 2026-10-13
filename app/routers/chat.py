@@ -217,166 +217,111 @@ async def discuter_avec_ia(requete: ChatRequest, db: Session = Depends(get_db)):
 
     texte_final = reponse_ia.content
 
-    # 4. Exécution de l'outil si déclenché
+    # 4. Exécution de tous les outils demandés par le modèle
     if reponse_ia.tool_calls:
-        tool_call = reponse_ia.tool_calls[0]
-        nom_outil = tool_call["name"]  # On regarde quel outil l'IA veut utiliser
-        args = tool_call["args"]
+        messages_complets = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages_complets.extend(messages_langchain)
+        messages_complets.append(HumanMessage(content=requete.message))
+        messages_complets.append(reponse_ia)
 
-        if nom_outil == "preparer_devis":
-            import json
-            import re
-            from datetime import datetime
-            import random
-            
-            # 1. Récupération des informations de l'IA (On ignore le montant donné par l'IA)
-            nom = args.get("nom", "Non précisé")
-            entreprise = args.get("entreprise", "Non précisé") 
-            email = args.get("email", "Non précisé")
-            telephone = args.get("telephone_personnel", "Non précisé") 
-            produit = args.get("produit", "Matériel")
-            quantite = int(args.get("quantite", 1))
-            dimensions = args.get("dimensions", "Standard")
-            duree = str(args.get("duree", "1 jour")).lower().strip()
+        for tool_call in reponse_ia.tool_calls:
+            nom_outil = tool_call["name"]
+            args = tool_call["args"]
+            resultat_outil = ""
 
-            # 2. Mise à jour du prospect
-            prospect.nom = nom
-            prospect.entreprise = entreprise
-            prospect.email = email
-            prospect.telephone = telephone
-            prospect.status = "Qualifié" 
-            
-            # --- 🔍 RECHERCHE DU PRODUIT EN BDD ---
-            produit_db = db.query(Produit).filter(Produit.nom.ilike(f"%{produit}%")).first()
-            produit_id = produit_db.produit_id if produit_db else None
-            
-            # --- 💰 CALCUL AUTOMATIQUE DU PRIX DEPUIS LE JSON ---
-           # --- 💰 CALCUL AUTOMATIQUE DU PRIX DEPUIS LE JSON ---
-            montant_ht = 0.0
-            if produit_db and produit_db.caracteristiques: # 👈 C'est ici !
-                try:
-                    # SQLAlchemy transforme déjà le JSONB en dictionnaire
-                    data_json = produit_db.caracteristiques
-                    tarifs = data_json.get("tarifs", {})
-                    
-                    # Analyse de la durée (ex: trouver "3" dans "3 jours")
-                    nombres = re.findall(r'\d+', duree)
-                    nb = int(nombres[0]) if nombres else 1
-                    
-                    # Création de la clé exacte pour chercher dans le dictionnaire
-                    cle_tarif = "1_jour"
-                    if "jour" in duree:
-                        cle_tarif = f"{nb}_jour" if nb == 1 else f"{nb}_jours"
-                    elif "semain" in duree:
-                        cle_tarif = f"{nb}_semaine" if nb == 1 else f"{nb}_semaines"
-                    elif "mois" in duree:
-                        cle_tarif = f"{nb}_mois"
-                    elif "an" in duree:
-                        cle_tarif = f"{nb}_an" if nb == 1 else f"{nb}_ans"
-                        
-                    # On cherche le prix unitaire dans la base
-                    prix_unitaire = float(tarifs.get(cle_tarif, 0.0))
-                    
-                    # Si la durée n'existe pas dans la base (ex: 4 jours), on calcule (1 jour * 4)
-                    if prix_unitaire == 0.0 and "1_jour" in tarifs:
+            if nom_outil == "preparer_devis":
+                import random
+
+                nom = args.get("nom", "Non précisé")
+                entreprise = args.get("entreprise", "Non précisé")
+                email = args.get("email", "Non précisé")
+                telephone = args.get("telephone_personnel", "Non précisé")
+                produit = args.get("produit", "Matériel")
+                quantite = int(args.get("quantite", 1))
+                dimensions = args.get("dimensions", "Standard")
+                duree = str(args.get("duree", "1 jour")).lower().strip()
+
+                prospect.nom = nom
+                prospect.entreprise = entreprise
+                prospect.email = email
+                prospect.telephone = telephone
+                prospect.status = "Qualifié"
+
+                produit_db = db.query(Produit).filter(Produit.nom.ilike(f"%{produit}%")).first()
+                produit_id = produit_db.produit_id if produit_db else None
+                montant_ht = 0.0
+                if produit_db and produit_db.caracteristiques:
+                    try:
+                        tarifs = produit_db.caracteristiques.get("tarifs", {})
+                        nombres = re.findall(r"\d+", duree)
+                        nb = int(nombres[0]) if nombres else 1
+                        cle_tarif = "1_jour"
                         if "jour" in duree:
-                            prix_unitaire = float(tarifs.get("1_jour")) * nb
-                        else:
-                            prix_unitaire = float(tarifs.get("1_jour"))
-                            
-                    # On multiplie par la quantité demandée
-                    montant_ht = prix_unitaire * quantite
+                            cle_tarif = f"{nb}_jour" if nb == 1 else f"{nb}_jours"
+                        elif "semain" in duree:
+                            cle_tarif = f"{nb}_semaine" if nb == 1 else f"{nb}_semaines"
+                        elif "mois" in duree:
+                            cle_tarif = f"{nb}_mois"
+                        elif "an" in duree:
+                            cle_tarif = f"{nb}_an" if nb == 1 else f"{nb}_ans"
 
-                except Exception as e:
-                    print(f"⚠️ Erreur de calcul du prix : {e}")
-                    montant_ht = 0.0
-            
-            prospect.montant_en_cours = montant_ht
-            
-            # --- 🛠️ GÉNÉRATION DU NUMÉRO DE DEVIS ---
-            numero_devis = f"DEV-{datetime.now().strftime('%y%m%d')}-{random.randint(1000, 9999)}"
+                        prix_unitaire = float(tarifs.get(cle_tarif, 0.0))
+                        if prix_unitaire == 0.0 and "1_jour" in tarifs:
+                            prix_unitaire = float(tarifs["1_jour"]) * nb if "jour" in duree else float(tarifs["1_jour"])
+                        montant_ht = prix_unitaire * quantite
+                    except Exception as e:
+                        print(f"⚠️ Erreur de calcul du prix : {e}")
 
-            # --- 3. CRÉATION DU DEVIS EN BROUILLON ---
-            nouveau_devis = Devis(
-                devis_id=numero_devis,
-                prospect_id=prospect.prospect_id,
-                produit_id=produit_id,
-                quantite=quantite,
-                caracteristiques_choisies={"dimensions": dimensions},
-                duree=duree,
-                prix_total=montant_ht,
-                prix_total_ttc=round(montant_ht * 1.20, 2),
-                status="Brouillon"
-            )
-            db.add(nouveau_devis)
-            db.commit()
+                prospect.montant_en_cours = montant_ht
+                numero_devis = f"DEV-{datetime.now().strftime('%y%m%d')}-{random.randint(1000, 9999)}"
+                nouveau_devis = Devis(
+                    devis_id=numero_devis,
+                    prospect_id=prospect.prospect_id,
+                    produit_id=produit_id,
+                    quantite=quantite,
+                    caracteristiques_choisies={"dimensions": dimensions},
+                    duree=duree,
+                    prix_total=montant_ht,
+                    prix_total_ttc=round(montant_ht * 1.20, 2),
+                    status="Brouillon"
+                )
+                db.add(nouveau_devis)
+                db.commit()
+                envoyer_notification_directeur(
+                    devis_id=numero_devis,
+                    nom_client=prospect.nom,
+                    montant=montant_ht,
+                    email_client=prospect.email,
+                    telephone_client=prospect.telephone
+                )
+                resultat_outil = (
+                    f"Devis {numero_devis} préparé en brouillon avec succès. Ne mentionne AUCUN PRIX. "
+                    "Dis EXACTEMENT et UNIQUEMENT au client que son dossier a été transmis à l'équipe "
+                    "commerciale pour validation et qu'il recevra son devis par email."
+                )
+                print(f"📦 Résultat de l'outil Devis : {resultat_outil}")
 
-            # --- 4. ALERTE UNIQUEMENT AU COMMERCIAL (PAS DE CLIENT) ---
-            envoyer_notification_directeur(
-                devis_id=numero_devis, 
-                nom_client=prospect.nom, 
-                montant=montant_ht, 
-                email_client=prospect.email, 
-                telephone_client=prospect.telephone
-            )
+            elif nom_outil == "consulter_catalogue":
+                print(f"👉 L'IA utilise le catalogue avec : {args}")
+                resultat_outil = consulter_catalogue.invoke(args)
+                print(f"📦 Résultat de la recherche catalogue : {resultat_outil}")
 
-            resultat_devis = f"Devis {numero_devis} préparé en brouillon avec succès. Ne mentionne AUCUN PRIX. Dis EXACTEMENT et UNIQUEMENT au client que son dossier a été transmis à l'équipe commerciale pour validation et qu'il recevra son devis par email."
-            print(f"📦 [ETAPE 2] Résultat de l'outil Devis : {resultat_devis}")
-            print("🧠 [ETAPE 3] Deuxième appel à l'IA en cours (génération de la réponse)...")
+            else:
+                resultat_outil = f"Erreur : outil inconnu '{nom_outil}'."
 
-            messages_langchain.append(reponse_ia)
-            messages_langchain.append(ToolMessage(content=resultat_devis, tool_call_id=tool_call["id"]))
-
-            reponse_finale = await llm_with_tools.ainvoke(messages_langchain)
-            texte_final = reponse_finale.content
-            
-            # --- DÉBUT DE LA CORRECTION ---
-            nouvel_historique = list(historique_actuel)
-            nouvel_historique.append({"role": "user", "content": requete.message})
-            nouvel_historique.append({"role": "agent", "content": texte_final})
-            conversation.messages = nouvel_historique
-            
-            # 🚨 OBLIGATOIRE POUR QUE LA BDD SAUVEGARDE LE JSON :
-            flag_modified(conversation, "messages")
-            
-            # UN SEUL COMMIT À LA TOUTE FIN POUR TOUT SAUVEGARDER D'UN COUP
-            db.commit()
-            # --- FIN DE LA CORRECTION ---
-
-            # FIN DE L'ACTION
-            return {
-                "prospect_id": requete.prospect_id,
-                "message_client": requete.message,
-                "reponse_agent": texte_final
-            }
-
-        elif nom_outil == "consulter_catalogue":
-            print(f"👉 [ETAPE 1] L'IA utilise le catalogue avec : {args}")
-            
-            # 1. On interroge la base de données via notre outil
-            resultat_catalogue = consulter_catalogue.invoke(args)
-            print(f"📦 [ETAPE 2] Résultat de la BDD : {resultat_catalogue}")
-            
-            # 2. On reconstruit l'ordre exact de la conversation
-            messages_complets = [SystemMessage(content=SYSTEM_PROMPT)]
-            messages_complets.extend(messages_langchain)
-            messages_complets.append(HumanMessage(content=requete.message))
-            messages_complets.append(reponse_ia)
+            # Chaque appel doit recevoir exactement une réponse associée à son ID.
             messages_complets.append(ToolMessage(
-                content=resultat_catalogue, 
+                content=str(resultat_outil),
                 tool_call_id=tool_call["id"]
             ))
-            
-            print("🧠 [ETAPE 3] Deuxième appel à l'IA en cours (génération de la réponse)...")
-            reponse_finale = await llm_with_tools.ainvoke(messages_complets)
-            texte_final = reponse_finale.content
-            
-            print(f"💬 [ETAPE 4] Texte généré par l'IA : '{texte_final}'")
-            
-            # 🚨 SÉCURITÉ : Si l'IA renvoie un texte vide, on force une réponse manuelle
-            if not texte_final or texte_final.strip() == "[]":
-               texte_final = "Pardon, je rencontre un problème technique, je reviens tout de suite."
-               print("⚠️ Alerte : Le texte final était vide. Activation de la phrase de secours.")
+
+        print("🧠 Tous les outils ont été traités; génération de la réponse finale...")
+        reponse_finale = await llm_with_tools.ainvoke(messages_complets)
+        texte_final = reponse_finale.content
+
+        if not texte_final or texte_final.strip() == "[]":
+            texte_final = "Pardon, je rencontre un problème technique, je reviens tout de suite."
+            print("⚠️ Alerte : Le texte final était vide. Activation de la phrase de secours.")
 
         # elif nom_outil == "transferer_commercial":
         #     # 1. On met à jour le statut du prospect dans la BDD
