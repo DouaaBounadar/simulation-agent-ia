@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.models.database import init_db
 from app.routers import chat, devis, produits, prospects, whatsapp
@@ -28,6 +30,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan  # <-- C'est la ligne magique !
 )
+
+STATIC_DIRECTORY = Path(__file__).resolve().parent / "static"
+STATIC_DIRECTORY.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIRECTORY), name="static")
 
 # Inclusion des routeurs
 app.include_router(produits.router)
